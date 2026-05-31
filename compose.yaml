@@ -1,0 +1,33 @@
+services:
+  backend-twomarkdown:
+    container_name: twomarkdown_backend
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    env_file:
+      - .env
+    environment:
+      - UV_PROJECT_ENVIRONMENT=/opt/venv
+    volumes:
+      - .:/app
+      - ./data:/data
+    networks:
+      - appnet_twomarkdown
+
+  ollama:
+    profiles:
+      - llm
+    image: ollama/ollama:latest
+    container_name: twomarkdown_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data_twomarkdown:/root/.ollama
+    networks:
+      - appnet_twomarkdown
+
+volumes:
+  ollama_data_twomarkdown:
+
+networks:
+  appnet_twomarkdown:

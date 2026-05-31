@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+data/*_2markdown/
+*_2markdown/
+*.md.bak
+.DS_Store
+
+data/
