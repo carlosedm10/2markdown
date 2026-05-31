@@ -46,3 +46,21 @@ class TestFolderWalker:
         expected_names = ["a.txt", "b.txt"]
 
         assert [f.name for f in files] == expected_names
+
+    def test_discover_files_skips_inside_iwork_bundle_and_finds_root(
+        self, nested_batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """discover_files() — discovers bundle root, not Data/*.png inside it."""
+        input_dir, output_dir = nested_batch_dirs
+
+        pages = input_dir / "doc.pages"
+        pages.mkdir()
+        (pages / "Metadata").mkdir()
+        (pages / "Metadata" / "DocumentIdentifier").write_text("id")
+        (pages / "Data").mkdir()
+        (pages / "Data" / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00")
+
+        files = discover_files(input_dir, output_dir)
+
+        assert [f.name for f in files] == ["doc.pages"]
+        assert files[0].suffix == ".pages"

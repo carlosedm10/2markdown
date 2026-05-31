@@ -16,3 +16,9 @@ OLLAMA_BASE_URL=http://ollama:11434/v1
 OLLAMA_VISION_MODEL=ollama:llama3.2-vision:11b
 
 MARKITDOWN_ENABLE_PLUGINS=false
+
+# Apple iWork (.pages, .key, .numbers) — native parsers by default
+IWORK_ENABLED=true
+IWORK_BACKEND=native
+# IWORK_BACKEND=kreuzberg  # requires: uv sync --extra iwork-kreuzberg
+# IWORK_USE_APP_EXPORT=false  # macOS only: export via Pages/Keynote/Numbers.app

@@ -64,7 +64,32 @@ make process INPUT="$HOME/Desktop/scan.pdf"
 
 MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.epub`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.zip`, `.msg`, `.wav`, `.mp3`.
 
+**Apple iWork** (directory bundles or zip archives on disk):
+
+| Format | Default backend | Notes |
+|--------|-----------------|-------|
+| `.numbers` | [numbers-parser](https://pypi.org/project/numbers-parser/) | Tables → markdown |
+| `.key` | [keynote-parser](https://pypi.org/project/keynote-parser/) | Slide text from IWA archives |
+| `.pages` | `preview.pdf` when present, else IWA text | Weaker than export; see below |
+
+Embedded files inside a bundle (e.g. `MyDoc.pages/Data/*.png`) are **not** converted separately — only the bundle root is processed.
+
+Optional **Kreuzberg** backend for stronger Pages coverage (Elastic-2.0 license):
+
+```bash
+# In Docker image build, add the extra before make build
+uv sync --extra iwork-kreuzberg
+```
+
+Set `IWORK_BACKEND=kreuzberg` in `.env`.
+
 Legacy `.doc`/`.ppt` and video files soft-fail with a warning; the batch continues.
+
+### iWork limitations
+
+- Floating text boxes in Pages may be missing without `preview.pdf` or Kreuzberg
+- Videos inside `Data/` are not transcribed
+- Very new Keynote versions may need an updated `keynote-parser`
 
 ## Scanned PDFs
 
@@ -80,6 +105,8 @@ When MarkItDown extracts fewer than 50 characters from a PDF page, each page is 
 | `PDF_OCR_MIN_CHARS` | `50` | Threshold for scanned-PDF fallback |
 | `PDF_OCR_DPI` | `200` | Rasterization quality for page OCR |
 | `OLLAMA_VISION_MODEL` | `ollama:llama3.2-vision:11b` | Vision model (set by `make build ollama`) |
+| `IWORK_ENABLED` | `true` | Convert `.pages` / `.key` / `.numbers` bundles |
+| `IWORK_BACKEND` | `native` | `native` or `kreuzberg` (optional extra) |
 
 ## Makefile reference
 

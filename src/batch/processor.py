@@ -9,8 +9,8 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from src.config import conversion_config, llm_config
-from src.converter import markitdown_converter, ocr, pdf_ocr
+from src.config import conversion_config, iwork_config, llm_config
+from src.converter import iwork, markitdown_converter, ocr, pdf_ocr
 from src.converter.markitdown_converter import ConversionError
 
 from .manifest import Manifest
@@ -82,6 +82,32 @@ def _apply_pdf_fallback(
     return pdf_ocr.merge(markdown, pages)
 
 
+def _convert_pdf_with_ocr(
+    pdf_path: Path, *, show_progress: bool = False
+) -> str:
+    markdown = markitdown_converter.convert_file(pdf_path)
+    return _apply_pdf_fallback(markdown, pdf_path, show_progress=show_progress)
+
+
+def _convert_source_to_markdown(
+    source_path: Path, *, show_progress: bool = False
+) -> str:
+    if iwork_config.iwork_enabled and iwork.is_iwork_bundle(source_path):
+        convert_pdf = None
+        if source_path.suffix.lower() == ".pages":
+            convert_pdf = lambda p: _convert_pdf_with_ocr(  # noqa: E731
+                p, show_progress=show_progress
+            )
+        return iwork.convert_bundle(source_path, convert_pdf=convert_pdf)
+
+    markdown = markitdown_converter.convert_file(source_path)
+    if source_path.suffix.lower() == ".pdf":
+        markdown = _apply_pdf_fallback(
+            markdown, source_path, show_progress=show_progress
+        )
+    return markdown
+
+
 def process_batch(
     input_dir: Path,
     output_dir: Path,
@@ -135,11 +161,9 @@ def process_batch(
                 continue
 
             try:
-                markdown = markitdown_converter.convert_file(source_path)
-                if source_path.suffix.lower() == ".pdf":
-                    markdown = _apply_pdf_fallback(
-                        markdown, source_path, show_progress=use_progress
-                    )
+                markdown = _convert_source_to_markdown(
+                    source_path, show_progress=use_progress
+                )
 
                 if not markdown or not markdown.strip():
                     raise ConversionError("empty result")

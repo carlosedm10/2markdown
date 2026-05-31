@@ -140,3 +140,37 @@ class TestBatchProcessor:
         mock_convert.assert_not_called()
         assert result.skipped == 1
         assert result.converted == 0
+
+    def test_process_batch_routes_iwork_bundle_through_iwork_converter(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — .pages bundle uses iwork.convert_bundle, not MarkItDown."""
+        input_dir, output_dir = batch_dirs
+        pages = input_dir / "notes.pages"
+        pages.mkdir()
+        (pages / "Metadata").mkdir()
+        (pages / "preview.pdf").write_bytes(b"%PDF-1.4\n")
+
+        with patch(
+            "src.converter.iwork.is_iwork_bundle",
+            return_value=True,
+        ):
+            with patch(
+                "src.converter.iwork.convert_bundle",
+                return_value="Page body text",
+            ) as mock_iwork:
+                with patch(
+                    "src.converter.markitdown_converter.convert_file",
+                ) as mock_markitdown:
+                    result = process_batch(
+                        input_dir,
+                        output_dir,
+                        skip_existing=False,
+                        ocr_enabled=False,
+                    )
+
+        mock_iwork.assert_called_once()
+        mock_markitdown.assert_not_called()
+        assert result.converted == 1
+        body = (output_dir / "notes.md").read_text(encoding="utf-8")
+        assert "Page body text" in body

@@ -28,8 +28,13 @@ DEFAULT_INCLUDE_EXTENSIONS = frozenset(
         ".mp3",
         ".zip",
         ".msg",
+        ".pages",
+        ".key",
+        ".numbers",
     }
 )
+
+IWORK_BUNDLE_SUFFIXES = frozenset({".pages", ".key", ".numbers"})
 
 SKIP_DIR_NAMES = frozenset({".git", "__pycache__", ".venv", "node_modules"})
 
@@ -90,7 +95,21 @@ class MarkItDownConfig(BaseSettings):
     markitdown_enable_plugins: bool = False
 
 
+class IWorkConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    iwork_enabled: bool = True
+    iwork_backend: Literal["native", "kreuzberg"] = "native"
+    iwork_use_app_export: bool = False
+
+
 conversion_config = ConversionConfig()
 pdf_ocr_config = PdfOcrConfig()
 llm_config = LLMConfig()
 markitdown_config = MarkItDownConfig()
+iwork_config = IWorkConfig()
