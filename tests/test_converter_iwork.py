@@ -29,9 +29,7 @@ class TestIWorkConverter:
         bundle.mkdir()
         assert iwork.is_iwork_bundle(bundle) is True
 
-    def test_convert_bundle_pages_uses_preview_pdf(
-        self, tmp_path: Path
-    ) -> None:
+    def test_convert_bundle_pages_uses_preview_pdf(self, tmp_path: Path) -> None:
         """convert_bundle() — Pages uses preview.pdf via convert_pdf callback."""
         bundle = tmp_path / "doc.pages"
         bundle.mkdir()
@@ -48,9 +46,7 @@ class TestIWorkConverter:
 
         assert markdown == "from-pdf:preview.pdf"
 
-    def test_convert_bundle_pages_raises_when_no_content(
-        self, tmp_path: Path
-    ) -> None:
+    def test_convert_bundle_pages_raises_when_no_content(self, tmp_path: Path) -> None:
         """convert_bundle() — Pages without preview or IWA text raises."""
         bundle = tmp_path / "doc.pages"
         bundle.mkdir()

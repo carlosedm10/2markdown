@@ -106,16 +106,16 @@ show-ollama-logs:
 .PHONY: lint format
 
 lint:
-	docker compose run --rm backend-twomarkdown uv run ruff check src/ tests/
+	docker compose run --rm backend-twomarkdown uv run --extra dev ruff check src/ tests/
 
 format:
-	docker compose run --rm backend-twomarkdown uv run ruff format src/ tests/
+	docker compose run --rm backend-twomarkdown uv run --extra dev ruff format src/ tests/
 
 # ----------------------------- Testing ----------------------------- #
 .PHONY: tests test
 
 tests:
-	docker compose run --rm backend-twomarkdown uv run pytest tests/ -m "not integration" -v
+	docker compose run --rm backend-twomarkdown uv run --extra dev pytest tests/ -m "not integration" -v
 
 test:
-	docker compose run --rm backend-twomarkdown uv run pytest $(TEST) -v
+	docker compose run --rm backend-twomarkdown uv run --extra dev pytest $(TEST) -v

@@ -82,9 +82,7 @@ def _apply_pdf_fallback(
     return pdf_ocr.merge(markdown, pages)
 
 
-def _convert_pdf_with_ocr(
-    pdf_path: Path, *, show_progress: bool = False
-) -> str:
+def _convert_pdf_with_ocr(pdf_path: Path, *, show_progress: bool = False) -> str:
     markdown = markitdown_converter.convert_file(pdf_path)
     return _apply_pdf_fallback(markdown, pdf_path, show_progress=show_progress)
 
@@ -186,9 +184,7 @@ def process_batch(
 
             except Exception as exc:
                 if use_progress:
-                    tqdm.write(
-                        f"Failed to convert {source_path} ({i}/{total}): {exc}"
-                    )
+                    tqdm.write(f"Failed to convert {source_path} ({i}/{total}): {exc}")
                 else:
                     logger.warning(
                         "Failed to convert %s (%s/%s): %s",
