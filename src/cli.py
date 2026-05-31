@@ -8,7 +8,7 @@ import typer
 
 from src.batch.processor import process_batch
 from src.config import conversion_config, llm_config, pdf_ocr_config
-from src.paths import default_output_dir
+from src.paths import normalize_batch_input
 
 app = typer.Typer(
     name="twomarkdown",
@@ -35,9 +35,9 @@ def convert(
         ...,
         "--input",
         "-i",
-        help="Input directory to walk recursively",
+        help="Input file or directory to convert",
         exists=True,
-        file_okay=False,
+        file_okay=True,
         dir_okay=True,
     ),
     output: Path | None = typer.Option(
@@ -55,6 +55,14 @@ def convert(
         True,
         "--skip-existing/--force",
         help="Skip files whose output .md is newer than source",
+    ),
+    ollama: bool = typer.Option(
+        False,
+        "--ollama",
+        help=(
+            "Use Ollama vision for OCR "
+            "(shortcut for --ocr-backend=ollama --llm-enabled)"
+        ),
     ),
     ocr_backend: Literal["tesseract", "ollama"] = typer.Option(
         "tesseract",
@@ -82,17 +90,26 @@ def convert(
         "-v",
         help="Verbose logging",
     ),
+    progress: bool | None = typer.Option(
+        None,
+        "--progress/--no-progress",
+        help="Show progress bar (default: on in TTY, off with --verbose)",
+    ),
 ) -> None:
     """Convert all supported files under INPUT to markdown under OUTPUT."""
     _configure_logging(verbose)
 
-    input = input.resolve()
-    resolved_output = output.resolve() if output is not None else default_output_dir(input)
+    batch_root, default_out, only_files = normalize_batch_input(input)
+    resolved_output = output.resolve() if output is not None else default_out
 
-    conversion_config.input_dir = input
+    conversion_config.input_dir = batch_root
     conversion_config.output_dir = resolved_output
     conversion_config.ocr_enabled = ocr
     conversion_config.skip_existing = skip_existing
+    if ollama:
+        ocr_backend = "ollama"
+        llm_enabled = True
+
     conversion_config.ocr_backend = ocr_backend
     conversion_config.fetch_remote_images = fetch_remote_images
     llm_config.llm_enabled = llm_enabled
@@ -105,17 +122,19 @@ def convert(
             err=True,
         )
 
-    typer.echo(f"Input:  {input}")
+    typer.echo(f"Input:  {input.resolve()}")
     typer.echo(f"Output: {resolved_output}")
 
     resolved_output.mkdir(parents=True, exist_ok=True)
 
     result = process_batch(
-        input,
+        batch_root,
         resolved_output,
+        only_files=only_files,
         skip_existing=skip_existing,
         ocr_enabled=ocr,
         verbose=verbose,
+        show_progress=progress,
     )
 
     typer.echo(

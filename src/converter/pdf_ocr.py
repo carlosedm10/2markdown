@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import fitz
+from tqdm import tqdm
 
 from src.config import pdf_ocr_config
 
@@ -32,6 +33,7 @@ def extract_pages(
     pdf_path: Path,
     *,
     ocr_fn: Callable[[bytes], str],
+    show_progress: bool = False,
 ) -> list[tuple[int, str]]:
     """OCR each PDF page; returns list of (page_number, text)."""
     results: list[tuple[int, str]] = []
@@ -41,14 +43,24 @@ def extract_pages(
         page_count = doc.page_count
         limit = page_count if max_pages is None else min(page_count, max_pages)
 
-        for i in range(limit):
-            page_num = i + 1
-            logger.info(
-                "PDF page OCR %s/%s: %s",
-                page_num,
-                limit,
-                pdf_path.name,
+        page_indices = range(limit)
+        if show_progress:
+            page_indices = tqdm(
+                page_indices,
+                desc=f"PDF OCR {pdf_path.name}",
+                unit="page",
+                leave=False,
             )
+
+        for i in page_indices:
+            page_num = i + 1
+            if not show_progress:
+                logger.info(
+                    "PDF page OCR %s/%s: %s",
+                    page_num,
+                    limit,
+                    pdf_path.name,
+                )
             png_bytes = _render_page_pixmap(doc, i)
             text = ocr_fn(png_bytes).strip()
             if text:

@@ -42,8 +42,8 @@ class ConversionConfig(BaseSettings):
         extra="ignore",
     )
 
-    input_dir: Path = Path("data/in")
-    output_dir: Path = Path("data/out")
+    input_dir: Path = Path(".")
+    output_dir: Path = Path(".")
     skip_existing: bool = True
     ocr_enabled: bool = True
     ocr_backend: Literal["tesseract", "ollama"] = "tesseract"

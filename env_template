@@ -1,21 +1,18 @@
-# Copy to .env: cp env_template .env
+# Written by: make fresh-setup
+# OCR mode is set by: make build  (tesseract)  or  make build ollama
 
-# Conversion defaults (CLI flags override)
 SKIP_EXISTING=true
 OCR_ENABLED=true
 OCR_BACKEND=tesseract
 FETCH_REMOTE_IMAGES=false
 
-# Scanned PDF page OCR fallback
 PDF_OCR_ENABLED=true
 PDF_OCR_MIN_CHARS=50
 PDF_OCR_DPI=200
 # PDF_OCR_MAX_PAGES=10
 
-# Optional Ollama vision OCR (image refs + scanned PDFs)
 LLM_ENABLED=false
-OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+OLLAMA_BASE_URL=http://ollama:11434/v1
 OLLAMA_VISION_MODEL=ollama:llama3.2-vision:11b
 
-# MarkItDown
 MARKITDOWN_ENABLE_PLUGINS=false

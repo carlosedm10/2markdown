@@ -1,10 +1,13 @@
 """Sequential batch conversion with soft-fail per file."""
 
 import logging
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from tqdm import tqdm
 
 from src.config import conversion_config, llm_config
 from src.converter import markitdown_converter, ocr, pdf_ocr
@@ -58,13 +61,24 @@ def _get_ocr_fn() -> Callable[[bytes], str] | None:
     return ocr.extract_text_with_tesseract
 
 
-def _apply_pdf_fallback(markdown: str, source_path: Path) -> str:
+def _resolve_show_progress(show_progress: bool | None, *, verbose: bool) -> bool:
+    if show_progress is not None:
+        return show_progress
+    return sys.stderr.isatty() and not verbose
+
+
+def _apply_pdf_fallback(
+    markdown: str, source_path: Path, *, show_progress: bool = False
+) -> str:
     if not pdf_ocr.should_fallback(markdown, suffix=source_path.suffix):
         return markdown
 
-    logger.info("Scanned PDF detected, running page OCR: %s", source_path)
+    if not show_progress:
+        logger.info("Scanned PDF detected, running page OCR: %s", source_path)
     ocr_fn = _get_ocr_fn() or ocr.extract_text_with_tesseract
-    pages = pdf_ocr.extract_pages(source_path, ocr_fn=ocr_fn)
+    pages = pdf_ocr.extract_pages(
+        source_path, ocr_fn=ocr_fn, show_progress=show_progress
+    )
     return pdf_ocr.merge(markdown, pages)
 
 
@@ -72,9 +86,11 @@ def process_batch(
     input_dir: Path,
     output_dir: Path,
     *,
+    only_files: list[Path] | None = None,
     skip_existing: bool | None = None,
     ocr_enabled: bool | None = None,
     verbose: bool = False,
+    show_progress: bool | None = None,
 ) -> BatchResult:
     input_dir = input_dir.resolve()
     output_dir = output_dir.resolve()
@@ -84,59 +100,83 @@ def process_batch(
     if ocr_enabled is not None:
         conversion_config.ocr_enabled = ocr_enabled
 
-    files = discover_files(input_dir, output_dir)
+    if only_files is not None:
+        files = sorted(path.resolve() for path in only_files)
+    else:
+        files = discover_files(input_dir, output_dir)
     total = len(files)
     manifest_path = output_dir / ".2markdown-manifest.json"
     manifest = Manifest(manifest_path)
     result = BatchResult()
     ocr_fn = _get_ocr_fn()
+    use_progress = _resolve_show_progress(show_progress, verbose=verbose)
 
-    for i, source_path in enumerate(files, 1):
-        output_md = _mirror_output_path(source_path, input_dir, output_dir)
+    with tqdm(
+        files,
+        desc="Converting",
+        unit="file",
+        disable=not use_progress,
+    ) as pbar:
+        for i, source_path in enumerate(pbar, 1):
+            output_md = _mirror_output_path(source_path, input_dir, output_dir)
 
-        if manifest.should_skip(source_path, output_md, skip_existing=skip_existing):
-            manifest.record(source_path, status="skipped", output=output_md)
-            result.skipped += 1
-            if verbose:
-                logger.info("[%s/%s] Skipped (up to date): %s", i, total, source_path)
-            continue
+            if use_progress:
+                pbar.set_postfix_str(source_path.name, refresh=False)
 
-        try:
-            markdown = markitdown_converter.convert_file(source_path)
-            if source_path.suffix.lower() == ".pdf":
-                markdown = _apply_pdf_fallback(markdown, source_path)
+            if manifest.should_skip(
+                source_path, output_md, skip_existing=skip_existing
+            ):
+                manifest.record(source_path, status="skipped", output=output_md)
+                result.skipped += 1
+                if verbose:
+                    logger.info(
+                        "[%s/%s] Skipped (up to date): %s", i, total, source_path
+                    )
+                continue
 
-            if not markdown or not markdown.strip():
-                raise ConversionError("empty result")
+            try:
+                markdown = markitdown_converter.convert_file(source_path)
+                if source_path.suffix.lower() == ".pdf":
+                    markdown = _apply_pdf_fallback(
+                        markdown, source_path, show_progress=use_progress
+                    )
 
-            if conversion_config.ocr_enabled:
-                markdown = ocr.enrich_markdown_images(
-                    markdown,
-                    source_path,
-                    ocr_fn=ocr_fn,
-                )
+                if not markdown or not markdown.strip():
+                    raise ConversionError("empty result")
 
-            content = _build_frontmatter(source_path, input_dir) + markdown
-            output_md.parent.mkdir(parents=True, exist_ok=True)
-            output_md.write_text(content, encoding="utf-8")
+                if conversion_config.ocr_enabled:
+                    markdown = ocr.enrich_markdown_images(
+                        markdown,
+                        source_path,
+                        ocr_fn=ocr_fn,
+                    )
 
-            manifest.record(source_path, status="ok", output=output_md)
-            result.converted += 1
-            if verbose:
-                logger.info("[%s/%s] Converted: %s", i, total, source_path)
+                content = _build_frontmatter(source_path, input_dir) + markdown
+                output_md.parent.mkdir(parents=True, exist_ok=True)
+                output_md.write_text(content, encoding="utf-8")
 
-        except Exception as exc:
-            logger.warning(
-                "Failed to convert %s (%s/%s): %s",
-                source_path,
-                i,
-                total,
-                exc,
-            )
-            manifest.record(source_path, status="failed", error=str(exc))
-            result.failed += 1
-            if result.failed_paths is not None:
-                result.failed_paths.append(str(source_path))
+                manifest.record(source_path, status="ok", output=output_md)
+                result.converted += 1
+                if verbose:
+                    logger.info("[%s/%s] Converted: %s", i, total, source_path)
+
+            except Exception as exc:
+                if use_progress:
+                    tqdm.write(
+                        f"Failed to convert {source_path} ({i}/{total}): {exc}"
+                    )
+                else:
+                    logger.warning(
+                        "Failed to convert %s (%s/%s): %s",
+                        source_path,
+                        i,
+                        total,
+                        exc,
+                    )
+                manifest.record(source_path, status="failed", error=str(exc))
+                result.failed += 1
+                if result.failed_paths is not None:
+                    result.failed_paths.append(str(source_path))
 
     manifest.save()
     return result

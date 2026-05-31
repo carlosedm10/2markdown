@@ -1,131 +1,104 @@
 # 2markdown
 
-Batch-convert a folder of documents to Markdown using [MarkItDown](https://github.com/microsoft/markitdown), with local OCR (Tesseract) and optional Ollama vision for images and scanned PDFs.
+Batch-convert files or folders to Markdown using [MarkItDown](https://github.com/microsoft/markitdown). Runs entirely in Docker.
 
-## Features
+## Requirements
 
-- Recursively walks an input directory and writes `.md` files that **mirror the folder tree**
-- Converts Office, PDF, HTML, images, archives, and more via `markitdown[all]`
-- **Tesseract OCR** (default, no API tokens) for markdown image refs and scanned PDF fallback
-- **Optional Ollama** (`llama3.2-vision:11b`) for higher-quality image/PDF page OCR
-- Per-file **soft-fail**: warnings + manifest; batch never aborts on a single bad file
+- [Docker](https://docs.docker.com/get-docker/) (Docker Desktop on macOS/Windows)
 
-## Quick start
-
-### Local (fastest)
+## Setup
 
 ```bash
-make setup          # .env + uv deps + sample files in data/in
-make dev            # convert data/in -> data/in_2markdown (verbose)
-ls -la data/in_2markdown/
+make fresh-setup
+make build              # Tesseract OCR — fast, offline, no extra downloads
+# or
+make build ollama       # Ollama vision OCR — higher quality on images & scanned PDFs
 ```
 
-### Docker
+`make fresh-setup` writes `.env` from the template and stops any existing containers.
+
+`make build` builds the converter image and locks in your OCR mode:
+
+| Command | OCR engine | Extra |
+|---------|------------|-------|
+| `make build` | **Tesseract** (default) | Nothing else to install |
+| `make build ollama` | **Ollama** (`llama3.2-vision:11b`) | Starts Ollama in Docker and pulls the recommended model |
+
+> Make does not support `--flags`. Use `make build ollama` (two words), not `make build --ollama`.
+
+To switch OCR mode later, run the other `make build` variant again.
+
+## Convert
 
 ```bash
-cp env_template .env   # if you have not run make setup
-make build
-make docker-seed       # optional: sample files under data/in
-make convert INPUT=/data/my-folder
+make process INPUT="/Users/you/Documents/reports"
+make process INPUT="/Users/you/Documents/report.pdf"
 ```
 
-Custom folders (output defaults to a sibling `<folder>_2markdown`):
+### What happens
+
+1. Your input path is mounted read/write into the container (same absolute path).
+2. Every supported file is converted to `.md`.
+3. Output is written **beside the input** as a sibling folder:
+
+| Input | Output |
+|-------|--------|
+| `/docs/reports/` (folder) | `/docs/reports_2markdown/` — mirrors the folder tree |
+| `/docs/report.pdf` (file) | `/docs/report_2markdown/report.md` |
+
+4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file.
+5. Files that already have a newer `.md` are skipped (use `.env` `SKIP_EXISTING=false` to force re-convert).
+
+### Examples
 
 ```bash
-# ~/Downloads/folder_to_process -> ~/Downloads/folder_to_process_2markdown
-uv run python -m src.cli --input ~/Downloads/folder_to_process
+# Folder of mixed Office docs, PDFs, images
+make process INPUT="$HOME/Downloads/client-docs"
 
-make convert-local INPUT=~/Downloads/folder_to_process
-
-# override output location
-make convert-local INPUT=~/Downloads/folder_to_process OUTPUT=~/Desktop/out
+# Single scanned PDF (best with Ollama)
+make build ollama
+make process INPUT="$HOME/Desktop/scan.pdf"
 ```
-
-## CLI
-
-```bash
-uv run python -m src.cli \
-  --input /path/to/docs \
-  --ocr \
-  --skip-existing \
-  --verbose
-```
-
-Output is written to `/path/to/docs_2markdown` (same parent as input) unless you pass `--output`.
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--output` / `-o` | `<input>_2markdown` | Override output directory |
-| `--ocr` / `--no-ocr` | on | OCR markdown `![...](...)` image refs |
-| `--skip-existing` / `--force` | skip | Skip if output `.md` is newer than source |
-| `--ocr-backend` | `tesseract` | `tesseract` or `ollama` |
-| `--llm-enabled` | off | Use Ollama vision for OCR |
-| `--pdf-ocr` / `--no-pdf-ocr` | on | Page OCR when PDF text is thin |
-| `--fetch-remote-images` | off | Fetch HTTP images for OCR |
-
-Exit code `1` if any file failed (batch still completes).
 
 ## Supported formats
 
-Handled by MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.epub`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.zip`, `.msg`, `.wav`, `.mp3`.
+MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.epub`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.zip`, `.msg`, `.wav`, `.mp3`.
 
-Legacy `.doc`/`.ppt` and video files are not supported and soft-fail with a warning.
+Legacy `.doc`/`.ppt` and video files soft-fail with a warning; the batch continues.
 
 ## Scanned PDFs
 
-If MarkItDown returns fewer than `PDF_OCR_MIN_CHARS` characters (default 50), each page is rasterized with PyMuPDF and OCR’d (Tesseract or Ollama). Output includes `## Page N — OCR` sections.
-
-## Optional Ollama OCR
-
-```bash
-ollama pull llama3.2-vision:11b
-```
-
-```bash
-uv run python -m src.cli \
-  --input ./data/in --output ./data/out \
-  --ocr-backend ollama --llm-enabled
-```
-
-Or use the Docker Ollama profile:
-
-```bash
-docker compose --profile llm up -d ollama
-```
-
-Set `OLLAMA_BASE_URL` in `.env` (e.g. `http://ollama:11434/v1` inside compose).
+When MarkItDown extracts fewer than 50 characters from a PDF page, each page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Output includes `## Page N — OCR` sections.
 
 ## Configuration
 
-Environment variables (see `env_template`):
+`.env` is managed by `make fresh-setup` and `make build`. Advanced tuning:
 
-- `OCR_ENABLED`, `OCR_BACKEND`, `FETCH_REMOTE_IMAGES`
-- `PDF_OCR_ENABLED`, `PDF_OCR_MIN_CHARS`, `PDF_OCR_DPI`, `PDF_OCR_MAX_PAGES`
-- `LLM_ENABLED`, `OLLAMA_VISION_MODEL`
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SKIP_EXISTING` | `true` | Skip if output `.md` is newer than source |
+| `PDF_OCR_MIN_CHARS` | `50` | Threshold for scanned-PDF fallback |
+| `PDF_OCR_DPI` | `200` | Rasterization quality for page OCR |
+| `OLLAMA_VISION_MODEL` | `ollama:llama3.2-vision:11b` | Vision model (set by `make build ollama`) |
 
-## Manifest
+## Makefile reference
 
-`<input>_2markdown/.2markdown-manifest.json` records per-file `ok`, `failed`, or `skipped` for resume and debugging.
+| Target | Description |
+|--------|-------------|
+| `fresh-setup` | Create/reset `.env`, stop containers |
+| `build` | Build image + enable Tesseract OCR |
+| `build ollama` | Build image + start Ollama + pull vision model |
+| `process INPUT=...` | Convert a file or folder |
+| `stop` | Stop all containers |
+| `show-ollama-logs` | Stream Ollama logs |
+| `tests` | Run unit tests in Docker |
 
 ## Development
 
-Tests follow **pytest class-based** conventions (aligned with our Django `APITestCase` style):
+Maintainer targets (`lint`, `format`, `tests`, `uv-add`, …) all run inside Docker. See the `Makefile`.
 
-- One `Test<Feature>` class per module
-- Descriptive docstrings per scenario (`"""process_batch() — ..."""`)
-- Section banners (`# --- Filtering ---`)
-- Shared Arrange fixtures in `tests/conftest.py`
-- Explicit `expected_stats` / `expected_record` dicts where stable
+## Notes
 
-```bash
-make tests          # unit tests
-make test TEST=tests/test_integration_convert.py  # integration (needs markitdown)
-make lint
-make format
-```
-
-## Local-only notes
-
-- Remote image URLs are not fetched unless `--fetch-remote-images`
-- Audio transcription may use external services via MarkItDown’s `speechrecognition` extra
-- YouTube URLs are not processed (folder walk uses local files only)
+- Remote image URLs are not fetched unless `FETCH_REMOTE_IMAGES=true` in `.env`
+- Audio transcription may call external services via MarkItDown extras
+- Only local paths are processed — no URL or YouTube ingestion

@@ -3335,6 +3335,7 @@ dependencies = [
     { name = "pymupdf" },
     { name = "pytesseract" },
     { name = "requests" },
+    { name = "tqdm" },
     { name = "typer" },
 ]
 
@@ -3355,6 +3356,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
     { name = "requests", specifier = ">=2.32.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
+    { name = "tqdm", specifier = ">=4.67.3" },
     { name = "typer", specifier = ">=0.15.0" },
 ]
 provides-extras = ["dev"]

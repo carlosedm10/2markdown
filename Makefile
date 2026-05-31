@@ -1,35 +1,64 @@
-# ------------------------------ Local dev ------------------------------ #
-.PHONY: setup convert-local dev clean-out
+OLLAMA_MODEL ?= llama3.2-vision:11b
+OLLAMA := $(if $(filter ollama,$(MAKECMDGOALS)),1,$(if $(OLLAMA),$(OLLAMA),0))
 
-# First-time: .env + deps + sample files in data/in
-setup:
-	@test -f .env || cp env_template .env
-	uv sync --extra dev
-	uv run python scripts/seed_samples.py
+# Dummy goal so `make build ollama` works (Make has no --flags)
+ollama: ; @:
 
-# Usage: make convert-local INPUT=data/in
-# Optional: OUTPUT=custom/path (default: <INPUT>_2markdown)
-convert-local:
-	uv run python -m src.cli --input $(INPUT) $(if $(OUTPUT),--output $(OUTPUT),) -v
+# ------------------------------ Setup ------------------------------ #
+.PHONY: fresh-setup build process stop
 
-# Convert bundled samples (data/in -> data/in_2markdown)
-dev: clean-out
-	uv run python -m src.cli --input data/in -v
+# Reset config and stop containers. Run once on a new machine.
+fresh-setup:
+	cp env_template .env
+	$(MAKE) stop
+	@echo "Ready. Next: make build   OR   make build ollama"
 
-clean-out:
-	rm -rf data/in_2markdown
-
-# ------------------------------ Docker Compose ------------------------------ #
-.PHONY: build start stop
-
+# Build the converter image.
+#   make build          -> Tesseract OCR (default, no GPU, no extra downloads)
+#   make build ollama   -> also start Ollama and pull llama3.2-vision:11b
 build:
+	@test -f .env || (echo "Run make fresh-setup first." && exit 1)
 	docker compose build
+ifeq ($(OLLAMA),1)
+	@python3 scripts/set_ocr_mode.py ollama
+	docker compose --profile llm up -d ollama
+	@echo "Pulling $(OLLAMA_MODEL) (first run may take several minutes)..."
+	docker compose --profile llm exec -T ollama ollama pull $(OLLAMA_MODEL)
+	@echo "Ollama OCR ready ($(OLLAMA_MODEL))."
+else
+	@python3 scripts/set_ocr_mode.py tesseract
+	@echo "Tesseract OCR ready."
+endif
 
-start:
-	docker compose up -d --remove-orphans
+# Convert a file or folder on your machine.
+# Usage: make process INPUT="/path/to/file-or-folder"
+#
+# Output is written next to the input:
+#   /docs/reports     -> /docs/reports_2markdown/
+#   /docs/report.pdf  -> /docs/report_2markdown/report.md
+process:
+	@test -f .env || (echo "Run make fresh-setup && make build first." && exit 1)
+	@test -n "$(INPUT)" || (echo 'Usage: make process INPUT="/path/to/file-or-folder"' && exit 1)
+	@set -e; \
+	INPUT_ABS=$$(cd "$$(dirname "$(INPUT)")" && pwd)/$$(basename "$(INPUT)"); \
+	test -e "$$INPUT_ABS" || (echo "Not found: $$INPUT_ABS" && exit 1); \
+	WORK_DIR=$$(dirname "$$INPUT_ABS"); \
+	if grep -q '^LLM_ENABLED=true' .env; then \
+		docker compose --profile llm ps ollama 2>/dev/null | grep -qE 'running|Up' || \
+			(echo "Ollama is not running. Run: make build ollama" && exit 1); \
+		COMPOSE="docker compose --profile llm"; \
+		OLLAMA_FLAG="--ollama"; \
+	else \
+		COMPOSE="docker compose"; \
+		OLLAMA_FLAG=""; \
+	fi; \
+	$$COMPOSE run --rm \
+		-v "$$WORK_DIR:$$WORK_DIR" \
+		backend-twomarkdown uv run python -m src.cli \
+		--input "$$INPUT_ABS" $$OLLAMA_FLAG -v
 
 stop:
-	docker compose down --remove-orphans
+	docker compose --profile llm down --remove-orphans
 
 # ----------------------------- Backend Package Management ----------------------------- #
 .PHONY: uv-lock uv-add uv-update uv-remove uv-lock-regenerate
@@ -65,23 +94,13 @@ backend-shell:
 	docker compose exec backend-twomarkdown bash
 
 # ----------------------------- Debugging ----------------------------- #
-.PHONY: show-backend-logs
+.PHONY: show-backend-logs show-ollama-logs
 
 show-backend-logs:
 	docker compose logs -f backend-twomarkdown
 
-# ----------------------------- Conversion ----------------------------- #
-.PHONY: convert
-
-# Usage: make convert INPUT=/data/in
-# Optional: OUTPUT=/data/custom-out
-convert:
-	docker compose run --rm backend-twomarkdown uv run python -m src.cli \
-		--input $(INPUT) $(if $(OUTPUT),--output $(OUTPUT),) -v
-
-# Seed samples inside Docker volume
-docker-seed:
-	docker compose run --rm backend-twomarkdown uv run python scripts/seed_samples.py
+show-ollama-logs:
+	docker compose --profile llm logs -f ollama
 
 # ----------------------------- Code Formatting ----------------------------- #
 .PHONY: lint format

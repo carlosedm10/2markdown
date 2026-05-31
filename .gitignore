@@ -8,9 +8,6 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-data/*_2markdown/
 *_2markdown/
 *.md.bak
 .DS_Store
-
-data/

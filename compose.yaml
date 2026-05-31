@@ -10,7 +10,6 @@ services:
       - UV_PROJECT_ENVIRONMENT=/opt/venv
     volumes:
       - .:/app
-      - ./data:/data
     networks:
       - appnet_twomarkdown
 
