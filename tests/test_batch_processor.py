@@ -51,6 +51,34 @@ class TestBatchProcessor:
         assert not (output_dir / "bad.md").exists()
         assert result.failed_paths == [str(bad.resolve())]
 
+    def test_process_batch_converts_standalone_png_via_ocr_fallback(
+        self, batch_dirs: tuple[Path, Path], minimal_png_bytes: bytes
+    ) -> None:
+        """process_batch() — standalone PNG uses OCR when MarkItDown returns empty."""
+        input_dir, output_dir = batch_dirs
+        img = input_dir / "diagram.png"
+        img.write_bytes(minimal_png_bytes)
+
+        with patch(
+            "src.converter.markitdown_converter.convert_file",
+            return_value="",
+        ):
+            with patch(
+                "src.converter.ocr.ocr_image_bytes",
+                return_value="Diagram text",
+            ):
+                result = process_batch(
+                    input_dir,
+                    output_dir,
+                    skip_existing=False,
+                    ocr_enabled=True,
+                )
+
+        assert result.converted == 1
+        assert result.failed == 0
+        body = (output_dir / "diagram.md").read_text(encoding="utf-8")
+        assert "Diagram text" in body
+
     def test_process_batch_records_failed_status_in_manifest(
         self, batch_dirs: tuple[Path, Path]
     ) -> None:

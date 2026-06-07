@@ -81,7 +81,10 @@ class LLMConfig(BaseSettings):
 
     llm_enabled: bool = False
     ollama_base_url: str = "http://host.docker.internal:11434/v1"
-    ollama_vision_model: str = "ollama:llama3.2-vision:11b"
+    ollama_vision_model: str = "ollama:moondream"
+    llm_ocr_max_dimension: int = 1568
+    llm_ocr_max_bytes: int = 1_500_000
+    llm_ocr_jpeg_quality: int = 85
 
 
 class MarkItDownConfig(BaseSettings):

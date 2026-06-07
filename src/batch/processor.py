@@ -103,6 +103,14 @@ def _convert_source_to_markdown(
         markdown = _apply_pdf_fallback(
             markdown, source_path, show_progress=show_progress
         )
+    elif ocr.is_raster_image(source_path):
+        if not show_progress:
+            logger.info("Raster image OCR: %s", source_path)
+        markdown = ocr.convert_image_file(
+            source_path,
+            ocr_fn=_get_ocr_fn(),
+            existing_markdown=markdown,
+        )
     return markdown
 
 

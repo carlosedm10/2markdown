@@ -18,7 +18,7 @@ OLLAMA = {
     "OCR_BACKEND": "ollama",
     "LLM_ENABLED": "true",
     "OLLAMA_BASE_URL": "http://ollama:11434/v1",
-    "OLLAMA_VISION_MODEL": "ollama:llama3.2-vision:11b",
+    "OLLAMA_VISION_MODEL": "ollama:moondream",
 }
 
 MODES = {"tesseract": TESSERACT, "ollama": OLLAMA}

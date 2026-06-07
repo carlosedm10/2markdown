@@ -22,7 +22,7 @@ make build ollama       # Ollama vision OCR — higher quality on images & scann
 | Command | OCR engine | Extra |
 |---------|------------|-------|
 | `make build` | **Tesseract** (default) | Nothing else to install |
-| `make build ollama` | **Ollama** (`llama3.2-vision:11b`) | Starts Ollama in Docker and pulls the recommended model |
+| `make build ollama` | **Ollama** (`moondream`) | Starts Ollama in Docker and pulls the default vision model (~2 GB RAM) |
 
 > Make does not support `--flags`. Use `make build ollama` (two words), not `make build --ollama`.
 
@@ -95,6 +95,8 @@ Legacy `.doc`/`.ppt` and video files soft-fail with a warning; the batch continu
 
 When MarkItDown extracts fewer than 50 characters from a PDF page, each page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Output includes `## Page N — OCR` sections.
 
+**Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` and set `OLLAMA_VISION_MODEL=ollama:llama3.2-vision:11b` in `.env`.
+
 ## Configuration
 
 `.env` is managed by `make fresh-setup` and `make build`. Advanced tuning:
@@ -104,7 +106,7 @@ When MarkItDown extracts fewer than 50 characters from a PDF page, each page is 
 | `SKIP_EXISTING` | `true` | Skip if output `.md` is newer than source |
 | `PDF_OCR_MIN_CHARS` | `50` | Threshold for scanned-PDF fallback |
 | `PDF_OCR_DPI` | `200` | Rasterization quality for page OCR |
-| `OLLAMA_VISION_MODEL` | `ollama:llama3.2-vision:11b` | Vision model (set by `make build ollama`) |
+| `OLLAMA_VISION_MODEL` | `ollama:moondream` | Vision model (set by `make build ollama`; override e.g. `ollama:llava` if you have more RAM) |
 | `IWORK_ENABLED` | `true` | Convert `.pages` / `.key` / `.numbers` bundles |
 | `IWORK_BACKEND` | `native` | `native` or `kreuzberg` (optional extra) |
 

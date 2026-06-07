@@ -15,7 +15,13 @@ from src.config import conversion_config
 
 logger = logging.getLogger(__name__)
 
+RASTER_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
+
 IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+
+
+def is_raster_image(path: Path) -> bool:
+    return path.suffix.lower() in RASTER_IMAGE_SUFFIXES
 
 
 def extract_text_with_tesseract(image_bytes: bytes) -> str:
@@ -82,6 +88,26 @@ def ocr_image_bytes(
 
 def _format_ocr_block(text: str) -> str:
     return f"\n### [OCR generated text]\n\n```\n{text}\n```\n"
+
+
+def convert_image_file(
+    path: Path,
+    *,
+    ocr_fn: Callable[[bytes], str] | None = None,
+    existing_markdown: str = "",
+) -> str:
+    """OCR a standalone image when MarkItDown yields little or no text."""
+    text = (existing_markdown or "").strip()
+    if text:
+        return existing_markdown
+    if not conversion_config.ocr_enabled:
+        return existing_markdown
+
+    ocr_text = ocr_image_bytes(path.read_bytes(), ocr_fn=ocr_fn)
+    if not ocr_text:
+        return existing_markdown
+
+    return f"## {path.name} — OCR\n\n```\n{ocr_text}\n```"
 
 
 def enrich_markdown_images(
