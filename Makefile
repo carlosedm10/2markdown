@@ -13,12 +13,13 @@ help:
 	@echo "2markdown — available targets"
 	@echo ""
 	@echo "Setup:"
-	@echo "  make fresh-setup              Copy env_template to .env and stop containers"
+	@echo "  make fresh-setup              Copy env_template to .env and stop stack"
 	@echo "  make build                    Build converter image (Tesseract OCR, default)"
-	@echo "  make build ollama             Build image and start Ollama with moondream"
-	@echo "  make build ollama OLLAMA_MODEL=llava   Use a different vision model"
+	@echo "  make build ollama             Build image, start host Ollama, pull moondream"
+	@echo "  make build ollama OLLAMA_MODEL=llava   Pull a different vision model"
+	@echo "  make start                    Start backend container (+ host Ollama if enabled)"
+	@echo "  make stop                     Stop Docker containers and host Ollama"
 	@echo "  make process INPUT=\"/path\"    Convert a file or folder"
-	@echo "  make stop                     Stop all containers"
 	@echo ""
 	@echo "Backend package management:"
 	@echo "  make uv-lock                  Refresh uv.lock"
@@ -33,7 +34,6 @@ help:
 	@echo ""
 	@echo "Debugging:"
 	@echo "  make show-backend-logs        Tail backend logs"
-	@echo "  make show-ollama-logs         Tail Ollama logs"
 	@echo ""
 	@echo "Code quality:"
 	@echo "  make lint                     Run ruff check"
@@ -44,35 +44,43 @@ help:
 	@echo "  make test TEST=tests/foo.py   Run a specific test file or path"
 	@echo ""
 	@echo "Danger zone:"
-	@echo "  make clean                    Stop containers and remove local caches"
-	@echo "  make clean-all                Remove volumes and local images (re-run make build after)"
+	@echo "  make clean                    Stop stack and remove local caches"
+	@echo "  make clean-all                Remove local images (re-run make build after)"
 
 # ------------------------------ Setup ------------------------------ #
-.PHONY: fresh-setup build process stop clean
+.PHONY: fresh-setup build start process stop clean
 
-# Reset config and stop containers. Run once on a new machine.
+# Reset config and stop stack. Run once on a new machine.
 fresh-setup:
 	cp env_template .env
 	$(MAKE) stop
-	@echo "Ready. Next: make build   OR   make build ollama"
+	@echo "Ready. Next: make build   OR   make build ollama (requires Ollama on host)"
 
 # Build the converter image.
-#   make build          -> Tesseract OCR (default, no GPU, no extra downloads)
-#   make build ollama   -> also start Ollama and pull moondream (~2 GB RAM)
+#   make build          -> Tesseract OCR (default, no extra downloads)
+#   make build ollama   -> also ensure host Ollama and pull moondream (~2 GB RAM)
 #   make build ollama OLLAMA_MODEL=llava   -> pull a different vision model
 build:
 	@test -f .env || (echo "Run make fresh-setup first." && exit 1)
 	docker compose build
 ifeq ($(OLLAMA),1)
 	@python3 scripts/set_ocr_mode.py ollama
-	docker compose --profile llm up -d ollama
-	@echo "Pulling $(OLLAMA_MODEL) (first run may take several minutes)..."
-	docker compose --profile llm exec -T ollama ollama pull $(OLLAMA_MODEL)
+	@python3 scripts/ollama_host.py ensure
+	@python3 scripts/ollama_host.py pull $(OLLAMA_MODEL)
 	@echo "Ollama OCR ready ($(OLLAMA_MODEL))."
 else
 	@python3 scripts/set_ocr_mode.py tesseract
 	@echo "Tesseract OCR ready."
 endif
+
+# Start backend container and ensure host Ollama when LLM OCR is enabled.
+start:
+	@test -f .env || (echo "Run make fresh-setup && make build first." && exit 1)
+	docker compose up -d backend-twomarkdown
+	@if grep -q '^LLM_ENABLED=true' .env; then \
+		python3 scripts/ollama_host.py ensure; \
+	fi
+	@echo "Stack started."
 
 # Convert a file or folder on your machine.
 # Usage: make process INPUT="/path/to/file-or-folder"
@@ -88,21 +96,19 @@ process:
 	test -e "$$INPUT_ABS" || (echo "Not found: $$INPUT_ABS" && exit 1); \
 	WORK_DIR=$$(dirname "$$INPUT_ABS"); \
 	if grep -q '^LLM_ENABLED=true' .env; then \
-		docker compose --profile llm ps ollama 2>/dev/null | grep -qE 'running|Up' || \
-			(echo "Ollama is not running. Run: make build ollama" && exit 1); \
-		COMPOSE="docker compose --profile llm"; \
+		python3 scripts/ollama_host.py ensure; \
 		OLLAMA_FLAG="--ollama"; \
 	else \
-		COMPOSE="docker compose"; \
 		OLLAMA_FLAG=""; \
 	fi; \
-	$$COMPOSE run --rm \
+	docker compose run --rm \
 		-v "$$WORK_DIR:$$WORK_DIR" \
 		backend-twomarkdown uv run python -m src.cli \
 		--input "$$INPUT_ABS" $$OLLAMA_FLAG -v
 
 stop:
-	docker compose --profile llm down --remove-orphans
+	docker compose down --remove-orphans
+	@python3 scripts/ollama_host.py stop
 
 
 # ----------------------------- Backend Package Management ----------------------------- #
@@ -139,13 +145,10 @@ backend-shell:
 	docker compose exec backend-twomarkdown bash
 
 # ----------------------------- Debugging ----------------------------- #
-.PHONY: show-backend-logs show-ollama-logs
+.PHONY: show-backend-logs
 
 show-backend-logs:
 	docker compose logs -f backend-twomarkdown
-
-show-ollama-logs:
-	docker compose --profile llm logs -f ollama
 
 # ----------------------------- Code Formatting ----------------------------- #
 .PHONY: lint format
@@ -176,10 +179,10 @@ clean:
 	@echo "Clean complete. Run make build to use the converter again."
 
 
-# Hard clean: removes Ollama model volume and locally built images.
+# Hard clean: removes locally built images.
 clean-all:
-	@echo "WARNING: Removes Ollama models volume and rebuilt images. Re-run make build afterward."
-	docker compose --profile llm down --volumes --remove-orphans --rmi local 2>/dev/null || true
+	@echo "WARNING: Removes rebuilt images. Re-run make build afterward."
+	docker compose down --volumes --remove-orphans --rmi local 2>/dev/null || true
 	@find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -exec rm -rf {} + 2>/dev/null || true
 	docker image prune -f
 	@echo "Clean-all complete. Run make build (or make build ollama) to start fresh."

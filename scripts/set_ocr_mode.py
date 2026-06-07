@@ -17,7 +17,7 @@ TESSERACT = {
 OLLAMA = {
     "OCR_BACKEND": "ollama",
     "LLM_ENABLED": "true",
-    "OLLAMA_BASE_URL": "http://ollama:11434/v1",
+    "OLLAMA_BASE_URL": "http://host.docker.internal:11434/v1",
     "OLLAMA_VISION_MODEL": "ollama:moondream",
 }
 

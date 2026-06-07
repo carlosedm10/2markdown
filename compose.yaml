@@ -10,23 +10,10 @@ services:
       - UV_PROJECT_ENVIRONMENT=/opt/venv
     volumes:
       - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - appnet_twomarkdown
-
-  ollama:
-    profiles:
-      - llm
-    image: ollama/ollama:latest
-    container_name: twomarkdown_ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data_twomarkdown:/root/.ollama
-    networks:
-      - appnet_twomarkdown
-
-volumes:
-  ollama_data_twomarkdown:
 
 networks:
   appnet_twomarkdown:

@@ -1,10 +1,11 @@
 # 2markdown
 
-Batch-convert files or folders to Markdown using [MarkItDown](https://github.com/microsoft/markitdown). Runs entirely in Docker.
+Batch-convert files or folders to Markdown using [MarkItDown](https://github.com/microsoft/markitdown). The converter runs in Docker; optional vision OCR uses [Ollama](https://ollama.com) on your host for better GPU/Metal performance.
 
 ## Requirements
 
 - [Docker](https://docs.docker.com/get-docker/) (Docker Desktop on macOS/Windows)
+- [Ollama](https://ollama.com) on the host — only when using vision OCR (`make build ollama`)
 
 ## Setup
 
@@ -13,20 +14,23 @@ make fresh-setup
 make build              # Tesseract OCR — fast, offline, no extra downloads
 # or
 make build ollama       # Ollama vision OCR — higher quality on images & scanned PDFs
+make start              # optional: keep backend container + host Ollama running
 ```
 
-`make fresh-setup` writes `.env` from the template and stops any existing containers.
+`make fresh-setup` writes `.env` from the template and stops the stack.
 
 `make build` builds the converter image and locks in your OCR mode:
 
 | Command | OCR engine | Extra |
 |---------|------------|-------|
 | `make build` | **Tesseract** (default) | Nothing else to install |
-| `make build ollama` | **Ollama** (`moondream`) | Starts Ollama in Docker and pulls the default vision model (~2 GB RAM) |
+| `make build ollama` | **Ollama** (`moondream`) | Installs/pulls the vision model on host Ollama (~2 GB RAM) |
 
 > Make does not support `--flags`. Use `make build ollama` (two words), not `make build --ollama`.
 
 To switch OCR mode later, run the other `make build` variant again.
+
+The converter reaches host Ollama at `http://host.docker.internal:11434/v1` (set automatically in `.env`).
 
 ## Convert
 
@@ -34,6 +38,8 @@ To switch OCR mode later, run the other `make build` variant again.
 make process INPUT="/Users/you/Documents/reports"
 make process INPUT="/Users/you/Documents/report.pdf"
 ```
+
+When `LLM_ENABLED=true`, `make process` ensures host Ollama is running before converting.
 
 ### What happens
 
@@ -106,6 +112,7 @@ When MarkItDown extracts fewer than 50 characters from a PDF page, each page is 
 | `SKIP_EXISTING` | `true` | Skip if output `.md` is newer than source |
 | `PDF_OCR_MIN_CHARS` | `50` | Threshold for scanned-PDF fallback |
 | `PDF_OCR_DPI` | `200` | Rasterization quality for page OCR |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` | Host Ollama API (Docker → host) |
 | `OLLAMA_VISION_MODEL` | `ollama:moondream` | Vision model (set by `make build ollama`; override e.g. `ollama:llava` if you have more RAM) |
 | `IWORK_ENABLED` | `true` | Convert `.pages` / `.key` / `.numbers` bundles |
 | `IWORK_BACKEND` | `native` | `native` or `kreuzberg` (optional extra) |
@@ -114,12 +121,12 @@ When MarkItDown extracts fewer than 50 characters from a PDF page, each page is 
 
 | Target | Description |
 |--------|-------------|
-| `fresh-setup` | Create/reset `.env`, stop containers |
+| `fresh-setup` | Create/reset `.env`, stop stack |
 | `build` | Build image + enable Tesseract OCR |
-| `build ollama` | Build image + start Ollama + pull vision model |
+| `build ollama` | Build image + ensure host Ollama + pull vision model |
+| `start` | Start backend container (+ host Ollama if LLM enabled) |
 | `process INPUT=...` | Convert a file or folder |
-| `stop` | Stop all containers |
-| `show-ollama-logs` | Stream Ollama logs |
+| `stop` | Stop Docker containers and host Ollama |
 | `tests` | Run unit tests in Docker |
 
 ## Development

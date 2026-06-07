@@ -1,5 +1,5 @@
 # Written by: make fresh-setup
-# OCR mode is set by: make build  (tesseract)  or  make build ollama
+# OCR mode is set by: make build  (tesseract)  or  make build ollama  (host Ollama)
 
 SKIP_EXISTING=true
 OCR_ENABLED=true
@@ -12,7 +12,7 @@ PDF_OCR_DPI=200
 # PDF_OCR_MAX_PAGES=10
 
 LLM_ENABLED=false
-OLLAMA_BASE_URL=http://ollama:11434/v1
+OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
 OLLAMA_VISION_MODEL=ollama:moondream
 # LLM_OCR_MAX_DIMENSION=1568
 # LLM_OCR_MAX_BYTES=1500000
