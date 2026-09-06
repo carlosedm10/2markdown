@@ -16,14 +16,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      # CI-shaped bootstrap: no Compose stack on the runner; Makefile uses native uv when CI=true.
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Ruff check
-        run: uv run --extra dev ruff check src/ tests/
+      - name: Lint
+        run: make lint
 
-      - name: Pytest (unit)
-        run: uv run --extra dev pytest tests/ -m "not integration" -v
+      - name: Test
+        run: make test
 
   integration:
     runs-on: ubuntu-latest
@@ -41,5 +42,5 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Pytest (integration)
-        run: uv run --extra dev pytest tests/ -m integration -v
+      - name: Integration tests
+        run: make test-integration

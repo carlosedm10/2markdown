@@ -1,21 +1,12 @@
 ---
-description: Install, remove, and lock Python packages only via Makefile
+description: Use Makefile targets for packages, tests, and lint
 alwaysApply: true
 ---
 
-# Package management
+# Makefile is the public interface
 
-Never run `uv add`, `uv remove`, `uv lock`, or `uv sync` on the host.
+Follow [.agents/skills/makefile-operations/SKILL.md](../../.agents/skills/makefile-operations/SKILL.md).
 
-All dependency changes go through Docker via the Makefile:
+Never run `uv add`, `uv remove`, `uv lock`, or `uv sync` on the host. Use `make uv-add`, `make uv-remove`, `make uv-lock`, `make lint`, `make test`.
 
-```bash
-make uv-add PKG="package>=1.0"
-make uv-remove PKG=package
-make uv-lock
-make uv-lock-regenerate
-make uv-update
-make uv-update PKG=foo
-```
-
-Do not hand-edit `pyproject.toml` / `uv.lock` to add or drop dependencies. Tests and lint also run in Docker: `make tests`, `make lint`, `make format`.
+Lifecycle: `make up` / `make down` / `make build` / `make restart` — not `start`/`stop`.
