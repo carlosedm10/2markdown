@@ -202,3 +202,35 @@ class TestBatchProcessor:
         assert result.converted == 1
         body = (output_dir / "notes.md").read_text(encoding="utf-8")
         assert "Page body text" in body
+
+    def test_process_batch_routes_epub_through_ereader_converter(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — .epub uses ereader.convert_ereader, not MarkItDown."""
+        input_dir, output_dir = batch_dirs
+        epub = input_dir / "book.epub"
+        epub.write_bytes(b"minimal epub")
+
+        with patch(
+            "src.converter.ereader.is_ereader",
+            return_value=True,
+        ):
+            with patch(
+                "src.converter.ereader.convert_ereader",
+                return_value="EPUB body",
+            ) as mock_ereader:
+                with patch(
+                    "src.converter.markitdown_converter.convert_file",
+                ) as mock_markitdown:
+                    result = process_batch(
+                        input_dir,
+                        output_dir,
+                        skip_existing=False,
+                        ocr_enabled=False,
+                    )
+
+        mock_ereader.assert_called_once()
+        mock_markitdown.assert_not_called()
+        assert result.converted == 1
+        body = (output_dir / "book.md").read_text(encoding="utf-8")
+        assert "EPUB body" in body

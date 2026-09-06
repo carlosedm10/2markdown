@@ -18,8 +18,9 @@ help:
 	@echo "  make build ollama             Build image, start host Ollama, pull moondream"
 	@echo "  make build ollama OLLAMA_MODEL=llava   Pull a different vision model"
 	@echo "  make start                    Start backend container (+ host Ollama if enabled)"
-	@echo "  make stop                     Stop Docker containers and host Ollama"
-	@echo "  make process INPUT=\"/path\"    Convert a file or folder"
+	@echo "  make stop                     Stop Docker containers"
+	@echo "  make stop-ollama              Stop host Ollama"
+	@echo "  make process INPUT=\"/path\" [VERBOSE=1]   Convert (mounts input + output only)"
 	@echo ""
 	@echo "Backend package management:"
 	@echo "  make uv-lock                  Refresh uv.lock"
@@ -48,7 +49,7 @@ help:
 	@echo "  make clean-all                Remove local images (re-run make build after)"
 
 # ------------------------------ Setup ------------------------------ #
-.PHONY: fresh-setup build start process stop clean
+.PHONY: fresh-setup build start process stop stop-ollama clean
 
 # Reset config and stop stack. Run once on a new machine.
 fresh-setup:
@@ -83,11 +84,11 @@ start:
 	@echo "Stack started."
 
 # Convert a file or folder on your machine.
-# Usage: make process INPUT="/path/to/file-or-folder"
+# Usage: make process INPUT="/path/to/file-or-folder" [VERBOSE=1]
 #
 # Output is written next to the input:
 #   /docs/reports     -> /docs/reports_2markdown/
-#   /docs/report.pdf  -> /docs/report_2markdown/report.md
+#   /docs/report.pdf  -> /docs/report_2markdown/
 process:
 	@test -f .env || (echo "Run make fresh-setup && make build first." && exit 1)
 	@test -n "$(INPUT)" || (echo 'Usage: make process INPUT="/path/to/file-or-folder"' && exit 1)
@@ -95,20 +96,35 @@ process:
 	INPUT_ABS=$$(cd "$$(dirname "$(INPUT)")" && pwd)/$$(basename "$(INPUT)"); \
 	test -e "$$INPUT_ABS" || (echo "Not found: $$INPUT_ABS" && exit 1); \
 	WORK_DIR=$$(dirname "$$INPUT_ABS"); \
+	if [ -d "$$INPUT_ABS" ]; then \
+		OUTPUT_ABS="$$WORK_DIR/$$(basename "$$INPUT_ABS")_2markdown"; \
+	else \
+		BASENAME=$$(basename "$$INPUT_ABS"); \
+		STEM=$${BASENAME%.*}; \
+		OUTPUT_ABS="$$WORK_DIR/$${STEM}_2markdown"; \
+	fi; \
+	mkdir -p "$$OUTPUT_ABS"; \
 	if grep -q '^LLM_ENABLED=true' .env; then \
 		python3 scripts/ollama_host.py ensure; \
 		OLLAMA_FLAG="--ollama"; \
 	else \
 		OLLAMA_FLAG=""; \
 	fi; \
+	VERBOSE_FLAG=""; \
+	if [ "$(VERBOSE)" = "1" ]; then VERBOSE_FLAG="-v"; fi; \
 	docker compose run --rm \
-		-v "$$WORK_DIR:$$WORK_DIR" \
+		-v "$$INPUT_ABS:$$INPUT_ABS" \
+		-v "$$OUTPUT_ABS:$$OUTPUT_ABS" \
 		backend-twomarkdown uv run python -m src.cli \
-		--input "$$INPUT_ABS" $$OLLAMA_FLAG -v
+		--input "$$INPUT_ABS" \
+		--output "$$OUTPUT_ABS" \
+		$$OLLAMA_FLAG $$VERBOSE_FLAG
 
 stop:
 	docker compose down --remove-orphans
-	@python3 scripts/ollama_host.py stop
+
+stop-ollama:
+	python3 scripts/ollama_host.py stop
 
 
 # ----------------------------- Backend Package Management ----------------------------- #

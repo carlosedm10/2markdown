@@ -12,13 +12,25 @@ from src.config import pdf_ocr_config
 logger = logging.getLogger(__name__)
 
 
-def should_fallback(markdown: str, *, suffix: str = "") -> bool:
+def should_fallback(
+    markdown: str,
+    *,
+    suffix: str = "",
+    pdf_path: Path | None = None,
+) -> bool:
     if not pdf_ocr_config.pdf_ocr_enabled:
         return False
     if suffix.lower() != ".pdf":
         return False
+    min_chars = pdf_ocr_config.pdf_ocr_min_chars
+    if pdf_path is not None:
+        with fitz.open(pdf_path) as doc:
+            for page in doc:
+                if len(page.get_text().strip()) < min_chars:
+                    return True
+        return False
     text = (markdown or "").strip()
-    return len(text) < pdf_ocr_config.pdf_ocr_min_chars
+    return len(text) < min_chars
 
 
 def _render_page_pixmap(doc: fitz.Document, page_index: int) -> bytes:
@@ -35,9 +47,10 @@ def extract_pages(
     ocr_fn: Callable[[bytes], str],
     show_progress: bool = False,
 ) -> list[tuple[int, str]]:
-    """OCR each PDF page; returns list of (page_number, text)."""
+    """OCR PDF pages with insufficient native text; returns (page_number, text)."""
     results: list[tuple[int, str]] = []
     max_pages = pdf_ocr_config.pdf_ocr_max_pages
+    min_chars = pdf_ocr_config.pdf_ocr_min_chars
 
     with fitz.open(pdf_path) as doc:
         page_count = doc.page_count
@@ -53,6 +66,10 @@ def extract_pages(
             )
 
         for i in page_indices:
+            page = doc[i]
+            if len(page.get_text().strip()) >= min_chars:
+                continue
+
             page_num = i + 1
             if not show_progress:
                 logger.info(

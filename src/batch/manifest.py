@@ -18,6 +18,12 @@ class FileRecord:
     mtime: float | None = None
     error: str | None = None
     output: str | None = None
+    ocr_backend: str | None = None
+
+
+def _file_record_from_raw(raw: dict[str, Any]) -> FileRecord:
+    known = {f.name for f in FileRecord.__dataclass_fields__.values()}
+    return FileRecord(**{k: v for k, v in raw.items() if k in known})
 
 
 class Manifest:
@@ -32,7 +38,7 @@ class Manifest:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             for key, raw in (data.get("files") or {}).items():
-                self.records[key] = FileRecord(**raw)
+                self.records[key] = _file_record_from_raw(raw)
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -54,6 +60,7 @@ class Manifest:
         status: FileStatus,
         error: str | None = None,
         output: Path | None = None,
+        ocr_backend: str | None = None,
     ) -> None:
         key = str(source.resolve())
         mtime = source.stat().st_mtime if source.exists() else None
@@ -63,6 +70,7 @@ class Manifest:
             mtime=mtime,
             error=error,
             output=str(output.resolve()) if output else None,
+            ocr_backend=ocr_backend,
         )
 
     def should_skip(
@@ -71,10 +79,22 @@ class Manifest:
         output_md: Path,
         *,
         skip_existing: bool,
+        ocr_backend: str | None = None,
     ) -> bool:
         if not skip_existing:
             return False
         if not output_md.exists():
+            return False
+        key = str(source.resolve())
+        record = self.records.get(key)
+        if record is not None and record.status == "failed":
+            return False
+        if (
+            ocr_backend is not None
+            and record is not None
+            and record.ocr_backend is not None
+            and record.ocr_backend != ocr_backend
+        ):
             return False
         try:
             return source.stat().st_mtime <= output_md.stat().st_mtime

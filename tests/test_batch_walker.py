@@ -1,6 +1,7 @@
 """Test cases for folder discovery (src.batch.walker)."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 from src.batch.walker import discover_files
 
@@ -64,3 +65,37 @@ class TestFolderWalker:
 
         assert [f.name for f in files] == ["doc.pages"]
         assert files[0].suffix == ".pages"
+
+    def test_discover_files_skips_md_by_default_includes_txt(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """discover_files() — skips .md when convert_existing_md is false."""
+        input_dir, output_dir = batch_dirs
+
+        (input_dir / "readme.md").write_text("# readme")
+        (input_dir / "notes.txt").write_text("notes")
+
+        with patch(
+            "src.batch.walker.conversion_config.convert_existing_md",
+            False,
+        ):
+            files = discover_files(input_dir, output_dir)
+
+        assert [f.name for f in files] == ["notes.txt"]
+
+    def test_discover_files_includes_md_when_convert_existing_md_true(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """discover_files() — includes .md when convert_existing_md is true."""
+        input_dir, output_dir = batch_dirs
+
+        (input_dir / "readme.md").write_text("# readme")
+        (input_dir / "notes.txt").write_text("notes")
+
+        with patch(
+            "src.batch.walker.conversion_config.convert_existing_md",
+            True,
+        ):
+            files = discover_files(input_dir, output_dir)
+
+        assert [f.name for f in files] == ["notes.txt", "readme.md"]

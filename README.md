@@ -32,18 +32,21 @@ To switch OCR mode later, run the other `make build` variant again.
 
 The converter reaches host Ollama at `http://host.docker.internal:11434/v1` (set automatically in `.env`).
 
+**OCR flags:** `--ocr-backend=ollama` enables the vision LLM (no silent Tesseract fallback). `--ollama` is a shortcut for the same. Default Tesseract language is `eng+spa` (`TESSERACT_LANG`).
+
 ## Convert
 
 ```bash
 make process INPUT="/Users/you/Documents/reports"
 make process INPUT="/Users/you/Documents/report.pdf"
+make process INPUT="/Users/you/Documents/reports" VERBOSE=1   # verbose logs
 ```
 
 When `LLM_ENABLED=true`, `make process` ensures host Ollama is running before converting.
 
 ### What happens
 
-1. Your input path is mounted read/write into the container (same absolute path).
+1. Only the input path and the sibling `*_2markdown` output directory are mounted (same absolute paths).
 2. Every supported file is converted to `.md`.
 3. Output is written **beside the input** as a sibling folder:
 
@@ -52,8 +55,9 @@ When `LLM_ENABLED=true`, `make process` ensures host Ollama is running before co
 | `/docs/reports/` (folder) | `/docs/reports_2markdown/` — mirrors the folder tree |
 | `/docs/report.pdf` (file) | `/docs/report_2markdown/report.md` |
 
-4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file.
-5. Files that already have a newer `.md` are skipped (use `.env` `SKIP_EXISTING=false` to force re-convert).
+4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file (including OCR backend).
+5. Skip logic respects OCR backend: failed files are retried; switching Tesseract → Ollama re-converts. Use `SKIP_EXISTING=false` to force re-convert everything.
+6. `.md` source files are not reconverted unless `CONVERT_EXISTING_MD=true`.
 
 ### Examples
 
@@ -68,7 +72,15 @@ make process INPUT="$HOME/Desktop/scan.pdf"
 
 ## Supported formats
 
-MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.epub`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.zip`, `.msg`, `.wav`, `.mp3`.
+MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.zip`, `.msg`, `.wav`, `.mp3`.
+
+**E-readers** (native parsers, not MarkItDown):
+
+| Format | Notes |
+|--------|-------|
+| `.epub` | Spine order, title/author metadata |
+| `.fb2` | FictionBook sections and paragraphs |
+| `.mobi`, `.azw`, `.azw3` | Unpacked HTML → markdown chapters |
 
 **Apple iWork** (directory bundles or zip archives on disk):
 
@@ -99,7 +111,7 @@ Legacy `.doc`/`.ppt` and video files soft-fail with a warning; the batch continu
 
 ## Scanned PDFs
 
-When MarkItDown extracts fewer than 50 characters from a PDF page, each page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Output includes `## Page N — OCR` sections.
+OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has fewer than `PDF_OCR_MIN_CHARS` characters, that page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Mixed PDFs (digital text + scans) OCR only the weak pages. Output still uses `## Page N — OCR` for those pages.
 
 **Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` and set `OLLAMA_VISION_MODEL=ollama:llama3.2-vision:11b` in `.env`.
 
@@ -110,7 +122,9 @@ When MarkItDown extracts fewer than 50 characters from a PDF page, each page is 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SKIP_EXISTING` | `true` | Skip if output `.md` is newer than source |
-| `PDF_OCR_MIN_CHARS` | `50` | Threshold for scanned-PDF fallback |
+| `CONVERT_EXISTING_MD` | `false` | Reconvert `.md` sources in the input tree |
+| `TESSERACT_LANG` | `eng+spa` | Tesseract language(s) for OCR |
+| `PDF_OCR_MIN_CHARS` | `50` | Per-page threshold for scanned-PDF fallback |
 | `PDF_OCR_DPI` | `200` | Rasterization quality for page OCR |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` | Host Ollama API (Docker → host) |
 | `OLLAMA_VISION_MODEL` | `ollama:moondream` | Vision model (set by `make build ollama`; override e.g. `ollama:llava` if you have more RAM) |
@@ -125,13 +139,16 @@ When MarkItDown extracts fewer than 50 characters from a PDF page, each page is 
 | `build` | Build image + enable Tesseract OCR |
 | `build ollama` | Build image + ensure host Ollama + pull vision model |
 | `start` | Start backend container (+ host Ollama if LLM enabled) |
-| `process INPUT=...` | Convert a file or folder |
-| `stop` | Stop Docker containers and host Ollama |
+| `process INPUT=...` | Convert a file or folder (mounts input + output only; use `VERBOSE=1` for `-v`) |
+| `stop` | Stop Docker containers |
+| `stop-ollama` | Stop host Ollama |
 | `tests` | Run unit tests in Docker |
 
 ## Development
 
 Maintainer targets (`lint`, `format`, `tests`, `uv-add`, …) all run inside Docker. See the `Makefile`.
+
+GitHub Actions runs **ruff** and unit tests on every push/PR. An optional integration job (Tesseract + `pytest -m integration`) also runs but is non-blocking (`continue-on-error`).
 
 ## Notes
 

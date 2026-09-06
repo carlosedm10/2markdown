@@ -19,6 +19,10 @@ DEFAULT_INCLUDE_EXTENSIONS = frozenset(
         ".json",
         ".xml",
         ".epub",
+        ".mobi",
+        ".azw",
+        ".azw3",
+        ".fb2",
         ".png",
         ".jpg",
         ".jpeg",
@@ -54,7 +58,8 @@ class ConversionConfig(BaseSettings):
     ocr_backend: Literal["tesseract", "ollama"] = "tesseract"
     fetch_remote_images: bool = False
     include_extensions: frozenset[str] = DEFAULT_INCLUDE_EXTENSIONS
-    convert_existing_md: bool = True
+    convert_existing_md: bool = False
+    tesseract_lang: str = "eng+spa"
 
 
 class PdfOcrConfig(BaseSettings):

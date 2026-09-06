@@ -2,9 +2,11 @@
 # OCR mode is set by: make build  (tesseract)  or  make build ollama  (host Ollama)
 
 SKIP_EXISTING=true
+CONVERT_EXISTING_MD=false
 OCR_ENABLED=true
 OCR_BACKEND=tesseract
 FETCH_REMOTE_IMAGES=false
+TESSERACT_LANG=eng+spa
 
 PDF_OCR_ENABLED=true
 PDF_OCR_MIN_CHARS=50

@@ -16,6 +16,9 @@ dependencies = [
     "tqdm>=4.67.3",
     "numbers-parser>=4.18",
     "keynote-parser>=1.14",
+    "ebooklib>=0.20",
+    "markdownify>=0.13.0",
+    "mobi>=0.3.3",
 ]
 
 [project.optional-dependencies]

@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsnappy-dev \
     tesseract-ocr \
     tesseract-ocr-eng \
+    tesseract-ocr-spa \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
