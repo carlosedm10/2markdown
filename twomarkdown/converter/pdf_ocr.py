@@ -11,6 +11,7 @@ import fitz
 from tqdm import tqdm
 
 from twomarkdown.config import pdf_ocr_config
+from twomarkdown.telemetry import span
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,8 @@ def extract_pages(
                     pdf_path.name,
                 )
             png_bytes = _render_page_pixmap(opened, i)
-            text = ocr_mod.ocr_image_bytes(png_bytes, ocr_fn=ocr_fn).strip()
+            with span("pdf.page_ocr", page=page_num):
+                text = ocr_mod.ocr_image_bytes(png_bytes, ocr_fn=ocr_fn).strip()
             if text:
                 results.append((page_num, text))
 

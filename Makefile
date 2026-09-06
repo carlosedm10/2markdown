@@ -59,6 +59,7 @@ help:
 	@echo "  make test                     Unit tests (exclude integration)"
 	@echo "  make test TEST=tests/foo.py   Run a specific test path"
 	@echo "  make test-integration         Integration tests"
+	@echo "  make bench                    Compare conversion methods (workers, OCR)"
 	@echo ""
 	@echo "Danger zone:"
 	@echo "  make clean                    NUCLEAR: compose down --volumes --remove-orphans + caches"
@@ -150,6 +151,7 @@ process:
 	CHUNKS_FLAG=""; \
 	if [ "$(EMIT_CHUNKS)" = "1" ]; then CHUNKS_FLAG="--emit-chunks"; fi; \
 	docker compose run --rm \
+		-e TWOMARKDOWN_TELEMETRY_DIR=/app/telemetry \
 		-v "$$INPUT_ABS:$$INPUT_ABS" \
 		-v "$$OUTPUT_ABS:$$OUTPUT_ABS" \
 		$(SERVICE) uv run python -m twomarkdown.cli \
@@ -232,7 +234,7 @@ lint:
 	$(call run_uv,run --extra dev ruff check twomarkdown/ tests/)
 
 # ----------------------------- Testing ----------------------------- #
-.PHONY: test test-integration
+.PHONY: test test-integration bench
 
 # Usage:
 #   make test
@@ -240,7 +242,7 @@ lint:
 test:
 	@echo ":: test: backend"
 ifeq ($(TEST),)
-	$(call run_uv,run --extra dev pytest tests/ -m "not integration" -v)
+	$(call run_uv,run --extra dev pytest tests/ -m "not integration and not bench" -v)
 else
 	$(call run_uv,run --extra dev pytest $(TEST) -v)
 endif
@@ -248,6 +250,10 @@ endif
 test-integration:
 	@echo ":: test-integration: backend"
 	$(call run_uv,run --extra dev pytest tests/ -m integration -v)
+
+bench:
+	@echo ":: bench: backend"
+	$(call run_uv,run --extra dev pytest tests/test_bench_methods.py -m bench -v)
 
 # ----------------------------- ⛔️ DANGER ZONE ⛔️ ----------------------------- #
 .PHONY: clean clean-builder

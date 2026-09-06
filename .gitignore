@@ -11,3 +11,4 @@ build/
 *_2markdown/
 *.md.bak
 .DS_Store
+/telemetry/

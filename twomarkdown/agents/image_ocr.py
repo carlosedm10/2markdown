@@ -96,15 +96,18 @@ def ocr_image_bytes_llm(image_bytes: bytes, *, mime_type: str = "image/png") -> 
         jpeg_quality=llm_config.llm_ocr_jpeg_quality,
     )
 
+    from twomarkdown.telemetry import span
+
     agent = get_image_ocr_agent()
     content = BinaryContent(data=prepared, media_type=mime_type)
     try:
-        result = agent.run_sync(
-            [
-                "Extract all visible text from this image.",
-                content,
-            ],
-        )
+        with span("ocr.ollama"):
+            result = agent.run_sync(
+                [
+                    "Extract all visible text from this image.",
+                    content,
+                ],
+            )
         return (result.output or "").strip()
     except ModelAPIError as exc:
         logger.warning("Vision OCR API error: %s", exc)

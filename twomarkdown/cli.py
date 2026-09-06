@@ -145,6 +145,11 @@ def convert(
         "--describe-figures/--no-describe-figures",
         help="Describe images with little OCR text when vision LLM is enabled",
     ),
+    report: bool = typer.Option(
+        conversion_config.write_export_report,
+        "--report/--no-report",
+        help="Write 2markdown-report.html/.pdf in the output folder",
+    ),
 ) -> None:
     """Convert all supported files under INPUT to markdown under OUTPUT."""
     _configure_logging(verbose)
@@ -168,6 +173,7 @@ def convert(
     conversion_config.extract_tables = tables
     conversion_config.describe_figures = describe_figures
     conversion_config.emit_chunks = emit_chunks
+    conversion_config.write_export_report = report
     if workers is not None:
         conversion_config.parallel_workers = max(1, workers)
     llm_config.llm_enabled = llm_enabled
@@ -209,6 +215,9 @@ def convert(
         f"Done: converted={result.converted}, "
         f"failed={result.failed}, skipped={result.skipped}"
     )
+    if conversion_config.write_export_report:
+        typer.echo(f"Report: {resolved_output / '2markdown-report.html'}")
+        typer.echo(f"PDF:    {resolved_output / '2markdown-report.pdf'}")
 
     if result.failed > 0 and result.failed_paths:
         typer.echo("Failed files:", err=True)

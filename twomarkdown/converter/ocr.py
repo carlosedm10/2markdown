@@ -32,6 +32,13 @@ def markdown_has_usable_text(markdown: str) -> bool:
 
 
 def is_raster_image(path: Path) -> bool:
+    if conversion_config.sniff_filetype and path.is_file():
+        try:
+            from twomarkdown.converter.filetype import effective_suffix
+
+            return effective_suffix(path) in RASTER_IMAGE_SUFFIXES
+        except Exception:
+            pass
     return path.suffix.lower() in RASTER_IMAGE_SUFFIXES
 
 
@@ -48,10 +55,13 @@ def extract_text_with_tesseract(image_bytes: bytes) -> str:
                 img = img.convert("RGB")
 
             grayscale = ImageOps.grayscale(img)
+            from twomarkdown.telemetry import span
+
             lang = conversion_config.tesseract_lang
-            text = pytesseract.image_to_string(grayscale, lang=lang).strip()
-            if not text:
-                text = pytesseract.image_to_string(img, lang=lang).strip()
+            with span("ocr.tesseract"):
+                text = pytesseract.image_to_string(grayscale, lang=lang).strip()
+                if not text:
+                    text = pytesseract.image_to_string(img, lang=lang).strip()
             return text
     except Exception as exc:
         logger.warning("Tesseract error: %s", exc)
@@ -126,10 +136,13 @@ def tesseract_ocr_with_confidence(image_bytes: bytes) -> tuple[str, float]:
             if img.mode not in ("L", "RGB"):
                 img = img.convert("RGB")
             grayscale = ImageOps.grayscale(img)
+            from twomarkdown.telemetry import span
+
             lang = conversion_config.tesseract_lang
-            data = pytesseract.image_to_data(
-                grayscale, lang=lang, output_type=pytesseract.Output.DICT
-            )
+            with span("ocr.tesseract"):
+                data = pytesseract.image_to_data(
+                    grayscale, lang=lang, output_type=pytesseract.Output.DICT
+                )
         confs = [
             float(c)
             for c in data.get("conf", [])
@@ -163,11 +176,15 @@ def ocr_image_bytes(
     if llm_fn is extract_text_with_tesseract:
         llm_fn = None
 
+    from twomarkdown.telemetry import note
+
     if use_hybrid:
         text, conf = tesseract_ocr_with_confidence(image_bytes)
+        note("ocr.tesseract", confidence=round(conf, 2))
         if text and conf >= conversion_config.ocr_confidence_min:
             return text
         if llm_fn is not None:
+            note("ocr.ollama")
             return llm_fn(image_bytes).strip()
         return text
 

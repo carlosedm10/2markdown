@@ -90,7 +90,7 @@ class ConversionConfig(BaseModel):
     skip_existing: bool = True
     convert_existing_md: bool = False
     include_extensions: frozenset[str] = DEFAULT_INCLUDE_EXTENSIONS
-    parallel_workers: int = 1
+    parallel_workers: int = 4
     file_timeout_sec: float | None = 300.0
     explode_zip: bool = True
     sniff_filetype: bool = True
@@ -110,6 +110,8 @@ class ConversionConfig(BaseModel):
     emit_chunks: bool = False
     chunk_max_chars: int = 1500
     chunk_overlap: int = 100
+    write_export_report: bool = True
+    project_telemetry_dir: Path | None = None
 
 
 class PdfOcrConfig(BaseModel):

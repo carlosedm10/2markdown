@@ -60,9 +60,10 @@ When OCR mode is Ollama (`make build ollama` writes `.ocr-mode`), `make process`
 | `/docs/reports/` (folder) | `/docs/reports_2markdown/` — mirrors the folder tree |
 | `/docs/report.pdf` (file) | `/docs/report_2markdown/report.md` |
 
-4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file (including OCR backend).
+4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file (including OCR backend). Open `<output>/2markdown-report.html` (or the PDF) for success rate, reliability, tools used, and timings.
 5. Skip logic respects OCR backend: failed files are retried; switching Tesseract → Ollama re-converts. Pass `--force` to the CLI, or set `skip_existing = False` in `twomarkdown/config.py`, to re-convert everything.
 6. `.md` source files are not reconverted unless `convert_existing_md = True` in `twomarkdown/config.py`.
+7. `make process` also writes span dumps under `telemetry/` in this repo (gitignored) so you can compare bottlenecks across runs. `--no-report` skips the HTML/PDF.
 
 ### Examples
 
@@ -130,10 +131,11 @@ Feature flags and tuning live in [`twomarkdown/config.py`](twomarkdown/config.py
 | `describe_figures` | `true` | Caption images with little OCR text (needs Ollama) |
 | `extract_assets` | `true` | Dump PDF embeds next to the `.md` |
 | `emit_chunks` | `false` | Write `.chunks.json` sidecar (heading-aware) |
-| `parallel_workers` | `1` | Parallel file conversions |
+| `parallel_workers` | `4` | Parallel file conversions |
 | `file_timeout_sec` | `300` | Per-file timeout |
 | `explode_zip` | `true` | Unpack generic zips before converting |
 | `sniff_filetype` | `true` | Prefer magic bytes over a lying extension |
+| `write_export_report` | `true` | Write `2markdown-report.html` / `.pdf` in the output folder |
 | `pdf_ocr_min_chars` | `50` | Per-page threshold for scanned-PDF fallback |
 | `pdf_ocr_dpi` | `200` | Rasterization quality for page OCR |
 | `ollama_base_url` | `http://host.docker.internal:11434/v1` | Host Ollama API (Docker → host) |
@@ -168,6 +170,7 @@ Make variables forwarded into the Typer CLI:
 | `EMIT_CHUNKS=1` | `--emit-chunks` |
 | `stop-ollama` | Stop host Ollama |
 | `test` | Unit tests (`TEST=` for one path) |
+| `bench` | Compare conversion methods (serial vs parallel) |
 
 ## Development
 
@@ -184,6 +187,7 @@ Maintainer targets all run **inside Docker**. Do not run `uv add` / `uv lock` on
 | `make lint` / `make lint-fix` / `make format` | Ruff check, auto-fix, format |
 | `make test` / `make test TEST=path` | Unit tests |
 | `make test-integration` | Integration tests |
+| `make bench` | Replay the same files with different methods |
 | `make logs` / `make backend-shell` | Backend logs and shell |
 
 GitHub Actions calls `make lint` and `make test` (`CI=true` → native `uv`). Optional `make test-integration` is non-blocking.

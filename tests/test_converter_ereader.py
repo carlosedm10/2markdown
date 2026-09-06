@@ -73,6 +73,16 @@ class TestEReaderConverter:
         assert "Second chapter" in markdown
         assert markdown.index("Hello EPUB") < markdown.index("Second chapter")
 
+    def test_convert_ereader_epub_rejects_incomplete_icloud_stub(
+        self, tmp_path: Path
+    ) -> None:
+        """convert_ereader() — truncated non-zip bytes get a download hint."""
+        epub_path = tmp_path / "book.epub"
+        epub_path.write_bytes(b"icloud-stub")
+
+        with pytest.raises(EReaderConversionError, match="not a complete zip"):
+            convert_ereader(epub_path)
+
     def test_convert_ereader_fb2_section_and_paragraph(self, tmp_path: Path) -> None:
         """convert_ereader() — FB2 body sections become markdown."""
         # Arrange

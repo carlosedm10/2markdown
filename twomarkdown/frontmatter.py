@@ -58,8 +58,16 @@ def build_frontmatter(
     source: Path,
     input_dir: Path,
     markdown: str,
+    *,
+    source_rel: Path | None = None,
 ) -> str:
-    rel = source.resolve().relative_to(input_dir.resolve())
+    if source_rel is None:
+        try:
+            rel = source.resolve().relative_to(input_dir.resolve())
+        except ValueError:
+            rel = Path(source.name)
+    else:
+        rel = source_rel
     backend = conversion_config.ocr_backend if conversion_config.ocr_enabled else "none"
     pdf_title, page_count = _pdf_meta(source)
     title = pdf_title or _title_from_markdown(markdown)

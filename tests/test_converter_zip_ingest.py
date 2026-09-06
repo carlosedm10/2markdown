@@ -21,6 +21,26 @@ class TestZipIngest:
 
         assert is_explodable_zip(zip_path) is True
 
+    def test_is_explodable_zip_false_for_epub(self, tmp_path: Path) -> None:
+        epub = tmp_path / "book.epub"
+        _write_zip(
+            epub,
+            {
+                "mimetype": b"application/epub+zip",
+                "META-INF/container.xml": b"<container/>",
+            },
+        )
+
+        assert is_explodable_zip(epub) is False
+
+    def test_is_explodable_zip_false_for_pdf_without_sniffing_as_zip(
+        self, tmp_path: Path
+    ) -> None:
+        pdf_path = tmp_path / "doc.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 content")
+
+        assert is_explodable_zip(pdf_path) is False
+
     def test_is_explodable_zip_false_for_docx(self, tmp_path: Path) -> None:
         zip_path = tmp_path / "file.docx"
         with zipfile.ZipFile(zip_path, "w") as archive:
