@@ -153,7 +153,7 @@ def ocr_image_bytes(
     *,
     ocr_fn: Callable[[bytes], str] | None = None,
 ) -> str:
-    if is_tiny_image(image_bytes) and ocr_fn is None:
+    if is_tiny_image(image_bytes):
         return ""
 
     use_hybrid = conversion_config.ocr_hybrid
