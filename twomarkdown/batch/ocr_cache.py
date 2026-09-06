@@ -1,4 +1,4 @@
-"""Disk cache for OCR text keyed by SHA-256 of image bytes."""
+"""Disk cache for OCR text keyed by backend, language, model, and image bytes."""
 
 from __future__ import annotations
 
@@ -10,12 +10,20 @@ logger = logging.getLogger(__name__)
 
 
 class OcrCache:
-    def __init__(self, cache_dir: Path):
+    def __init__(
+        self,
+        cache_dir: Path,
+        *,
+        backend: str = "",
+        lang: str = "",
+        model: str = "",
+    ):
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._key_prefix = f"{backend}|{lang}|{model}|".encode()
 
     def _path(self, image_bytes: bytes) -> Path:
-        digest = hashlib.sha256(image_bytes).hexdigest()
+        digest = hashlib.sha256(self._key_prefix + image_bytes).hexdigest()
         return self.cache_dir / f"{digest}.txt"
 
     def get(self, image_bytes: bytes) -> str | None:

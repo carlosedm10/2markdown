@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from io import BytesIO
+from pathlib import Path
 
 from PIL import Image, ImageOps
 
@@ -91,3 +92,15 @@ def prepare_image_for_vision_llm(
             max_bytes,
         )
         return out, "image/jpeg"
+
+
+def rasterize_svg(path: Path) -> bytes:
+    """Rasterize an SVG file to PNG bytes. Requires the optional ``svg`` extra."""
+    try:
+        import cairosvg
+    except ImportError as exc:
+        raise RuntimeError("SVG support requires: make uv-sync EXTRA=svg") from exc
+    png = cairosvg.svg2png(url=str(path))
+    if not png:
+        raise RuntimeError(f"SVG rasterization yielded no PNG: {path}")
+    return png

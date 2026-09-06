@@ -1,9 +1,9 @@
-"""Test cases for conversion manifest (src.batch.manifest)."""
+"""Test cases for conversion manifest (twomarkdown.batch.manifest)."""
 
 import json
 from pathlib import Path
 
-from src.batch.manifest import Manifest
+from twomarkdown.batch.manifest import Manifest, file_checksum
 
 
 class TestManifest:
@@ -208,3 +208,36 @@ class TestManifest:
 
         manifest = Manifest(manifest_path)
         assert manifest.records[key].ocr_backend is None
+
+    def test_record_persists_without_explicit_save(self, tmp_path: Path) -> None:
+        """record() — writes JSON immediately so a crash keeps prior files."""
+        manifest_path = tmp_path / ".2markdown-manifest.json"
+        source = tmp_path / "a.txt"
+        source.write_text("x")
+        output = tmp_path / "a.md"
+        output.write_text("ok")
+
+        manifest = Manifest(manifest_path)
+        manifest.record(source, status="ok", output=output)
+
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert payload["files"][str(source.resolve())]["status"] == "ok"
+
+    def test_file_checksum_directory_changes_when_inner_file_changes(
+        self, tmp_path: Path
+    ) -> None:
+        """file_checksum() — directory bundles hash nested file contents."""
+        bundle = tmp_path / "notes.pages"
+        bundle.mkdir()
+        (bundle / "Metadata").mkdir()
+        inner = bundle / "Index" / "Document.iwa"
+        inner.parent.mkdir()
+        inner.write_bytes(b"alpha")
+
+        first = file_checksum(bundle)
+        inner.write_bytes(b"beta")
+        second = file_checksum(bundle)
+
+        assert first is not None
+        assert second is not None
+        assert first != second

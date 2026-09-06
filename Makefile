@@ -33,6 +33,8 @@ help:
 	@echo "  make restart                  Restart the backend container"
 	@echo "  make stop-ollama              Stop host Ollama"
 	@echo "  make process INPUT=\"/path\" [VERBOSE=1] [DRY_RUN=1] [WORKERS=n]"
+	@echo "            [FORCE=1] [OCR_BACKEND=tesseract|ollama] [OUTPUT=/path]"
+	@echo "            [NO_OCR=1] [EMIT_CHUNKS=1]"
 	@echo ""
 	@echo "Backend package management:"
 	@echo "  make uv-lock                  Refresh uv.lock"
@@ -40,7 +42,7 @@ help:
 	@echo "  make uv-update                Upgrade all dependencies"
 	@echo "  make uv-update PKG=foo        Upgrade one package"
 	@echo "  make uv-remove PKG=foo        Remove a dependency"
-	@echo "  make uv-lock-regenerate       Regenerate lock file from scratch"
+	@echo "  make uv-sync EXTRA=foo         Install optional extra (plus dev)"
 	@echo ""
 	@echo "Terminals:"
 	@echo "  make backend-shell            Open a shell in the backend container"
@@ -66,7 +68,7 @@ help:
 .PHONY: fresh-setup build up restart process down stop-ollama
 
 # Reset secrets file and tear down stack. Run once on a new machine.
-# Feature flags live in src/config.py; .env is credentials only.
+# Feature flags live in twomarkdown/config.py; .env is credentials only.
 fresh-setup:
 	@echo ":: fresh-setup: ."
 	cp env_template .env
@@ -106,8 +108,9 @@ restart:
 
 # Convert a file or folder on your machine.
 # Usage: make process INPUT="/path/to/file-or-folder" [VERBOSE=1] [DRY_RUN=1] [WORKERS=n]
+#        [FORCE=1] [OCR_BACKEND=tesseract|ollama] [OUTPUT=/path] [NO_OCR=1] [EMIT_CHUNKS=1]
 #
-# Output is written next to the input:
+# Output is written next to the input unless OUTPUT= is set:
 #   /docs/reports     -> /docs/reports_2markdown/
 #   /docs/report.pdf  -> /docs/report_2markdown/
 process:
@@ -118,7 +121,10 @@ process:
 	INPUT_ABS=$$(cd "$$(dirname "$(INPUT)")" && pwd)/$$(basename "$(INPUT)"); \
 	test -e "$$INPUT_ABS" || (echo "Not found: $$INPUT_ABS" && exit 1); \
 	WORK_DIR=$$(dirname "$$INPUT_ABS"); \
-	if [ -d "$$INPUT_ABS" ]; then \
+	if [ -n "$(OUTPUT)" ]; then \
+		mkdir -p "$(OUTPUT)"; \
+		OUTPUT_ABS=$$(cd "$(OUTPUT)" && pwd); \
+	elif [ -d "$$INPUT_ABS" ]; then \
 		OUTPUT_ABS="$$WORK_DIR/$$(basename "$$INPUT_ABS")_2markdown"; \
 	else \
 		BASENAME=$$(basename "$$INPUT_ABS"); \
@@ -126,7 +132,7 @@ process:
 		OUTPUT_ABS="$$WORK_DIR/$${STEM}_2markdown"; \
 	fi; \
 	mkdir -p "$$OUTPUT_ABS"; \
-	if python3 scripts/set_ocr_mode.py is-llm; then \
+	if python3 scripts/set_ocr_mode.py is-llm || [ "$(OCR_BACKEND)" = "ollama" ]; then \
 		python3 scripts/ollama_host.py ensure; \
 	fi; \
 	VERBOSE_FLAG=""; \
@@ -135,13 +141,21 @@ process:
 	if [ "$(DRY_RUN)" = "1" ]; then DRY_RUN_FLAG="--dry-run"; fi; \
 	WORKERS_FLAG=""; \
 	if [ -n "$(WORKERS)" ]; then WORKERS_FLAG="--workers $(WORKERS)"; fi; \
+	FORCE_FLAG=""; \
+	if [ "$(FORCE)" = "1" ]; then FORCE_FLAG="--force"; fi; \
+	OCR_FLAG=""; \
+	if [ "$(NO_OCR)" = "1" ]; then OCR_FLAG="--no-ocr"; fi; \
+	OCR_BACKEND_FLAG=""; \
+	if [ -n "$(OCR_BACKEND)" ]; then OCR_BACKEND_FLAG="--ocr-backend $(OCR_BACKEND)"; fi; \
+	CHUNKS_FLAG=""; \
+	if [ "$(EMIT_CHUNKS)" = "1" ]; then CHUNKS_FLAG="--emit-chunks"; fi; \
 	docker compose run --rm \
 		-v "$$INPUT_ABS:$$INPUT_ABS" \
 		-v "$$OUTPUT_ABS:$$OUTPUT_ABS" \
-		$(SERVICE) uv run python -m src.cli \
+		$(SERVICE) uv run python -m twomarkdown.cli \
 		--input "$$INPUT_ABS" \
 		--output "$$OUTPUT_ABS" \
-		$$VERBOSE_FLAG $$DRY_RUN_FLAG $$WORKERS_FLAG
+		$$VERBOSE_FLAG $$DRY_RUN_FLAG $$WORKERS_FLAG $$FORCE_FLAG $$OCR_FLAG $$OCR_BACKEND_FLAG $$CHUNKS_FLAG
 
 down:
 	@echo ":: down: ."
@@ -152,7 +166,7 @@ stop-ollama:
 	@python3 scripts/ollama_host.py stop
 
 # ----------------------------- Backend Package Management ----------------------------- #
-.PHONY: uv-lock uv-add uv-update uv-remove uv-lock-regenerate
+.PHONY: uv-lock uv-add uv-update uv-remove uv-lock-regenerate uv-sync
 
 # Usage:
 #   make uv-add PKG="package[extras]==version"
@@ -183,6 +197,11 @@ uv-lock-regenerate:
 	@echo ":: uv-lock-regenerate: backend"
 	docker compose run --rm $(SERVICE) uv lock --refresh
 
+uv-sync:
+	@echo ":: uv-sync: backend"
+	@test -n "$(EXTRA)" || (echo 'Usage: make uv-sync EXTRA=audio-whisper' && exit 1)
+	$(call run_uv,sync --extra $(EXTRA) --extra dev)
+
 # ----------------------------- Terminals ----------------------------- #
 .PHONY: backend-shell
 
@@ -202,15 +221,15 @@ logs:
 
 format:
 	@echo ":: format: backend"
-	$(call run_uv,run --extra dev ruff format src/ tests/)
+	$(call run_uv,run --extra dev ruff format twomarkdown/ tests/)
 
 lint-fix:
 	@echo ":: lint-fix: backend"
-	$(call run_uv,run --extra dev ruff check --fix src/ tests/)
+	$(call run_uv,run --extra dev ruff check --fix twomarkdown/ tests/)
 
 lint:
 	@echo ":: lint: backend"
-	$(call run_uv,run --extra dev ruff check src/ tests/)
+	$(call run_uv,run --extra dev ruff check twomarkdown/ tests/)
 
 # ----------------------------- Testing ----------------------------- #
 .PHONY: test test-integration

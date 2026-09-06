@@ -1,10 +1,10 @@
-"""Tests for file type sniffing (src.converter.filetype)."""
+"""Tests for file type sniffing (twomarkdown.converter.filetype)."""
 
 from pathlib import Path
 
 import pytest
 
-from src.converter.filetype import effective_suffix, sniff_suffix
+from twomarkdown.converter.filetype import effective_suffix, sniff_suffix
 from tests.conftest import MINIMAL_PNG_BYTES
 
 
@@ -35,7 +35,7 @@ class TestFiletypeSniffing:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "src.converter.filetype.conversion_config.sniff_filetype",
+                "twomarkdown.converter.filetype.conversion_config.sniff_filetype",
                 True,
             )
             assert effective_suffix(png_path) == ".png"
@@ -46,7 +46,12 @@ class TestFiletypeSniffing:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "src.converter.filetype.conversion_config.sniff_filetype",
+                "twomarkdown.converter.filetype.conversion_config.sniff_filetype",
                 False,
             )
             assert effective_suffix(png_path) == ".bin"
+
+    def test_sniff_suffix_tiff_magic(self, tmp_path: Path) -> None:
+        tiff_path = tmp_path / "scan.bin"
+        tiff_path.write_bytes(b"II*\x00" + b"\x00" * 8)
+        assert sniff_suffix(tiff_path) == ".tiff"

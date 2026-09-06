@@ -7,12 +7,17 @@ from pathlib import Path
 
 import fitz
 
-from src.config import conversion_config
+from twomarkdown.config import conversion_config
 
 logger = logging.getLogger(__name__)
 
 
-def extract_pdf_images(pdf_path: Path, assets_dir: Path) -> list[tuple[Path, int]]:
+def extract_pdf_images(
+    pdf_path: Path,
+    assets_dir: Path,
+    *,
+    doc: fitz.Document | None = None,
+) -> list[tuple[Path, int]]:
     """Extract embedded images from a PDF into ``assets_dir``.
 
     Returns ``(saved_path, page_number)`` tuples. Never raises; logs warnings.
@@ -25,11 +30,13 @@ def extract_pdf_images(pdf_path: Path, assets_dir: Path) -> list[tuple[Path, int
 
     try:
         assets_dir.mkdir(parents=True, exist_ok=True)
-        with fitz.open(pdf_path) as doc:
+        from twomarkdown.converter.pdf_ocr import open_pdf
+
+        with open_pdf(pdf_path, doc) as opened:
             stem = pdf_path.stem
-            for page_index in range(len(doc)):
+            for page_index in range(len(opened)):
                 page_number = page_index + 1
-                page = doc[page_index]
+                page = opened[page_index]
                 try:
                     image_infos = page.get_images(full=True)
                 except Exception as exc:
@@ -45,7 +52,7 @@ def extract_pdf_images(pdf_path: Path, assets_dir: Path) -> list[tuple[Path, int
                 for img_info in image_infos:
                     xref = img_info[0]
                     try:
-                        base_image = doc.extract_image(xref)
+                        base_image = opened.extract_image(xref)
                     except Exception as exc:
                         logger.warning(
                             "Failed to extract image xref %s from %s page %s: %s",

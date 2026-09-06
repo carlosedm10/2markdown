@@ -7,7 +7,7 @@ from pathlib import Path
 
 import fitz
 
-from src.config import conversion_config
+from twomarkdown.config import conversion_config
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +32,19 @@ def _cell_text(value: object) -> str:
     return str(value).replace("\n", " ").strip()
 
 
-def extract_pdf_tables(pdf_path: Path) -> list[tuple[int, str]]:
+def extract_pdf_tables(
+    pdf_path: Path, *, doc: fitz.Document | None = None
+) -> list[tuple[int, str]]:
     """Return (page_number, markdown) tables. Never raises."""
     if not conversion_config.extract_tables:
         return []
 
+    from twomarkdown.converter.pdf_ocr import open_pdf
+
     results: list[tuple[int, str]] = []
     try:
-        with fitz.open(pdf_path) as doc:
-            for index, page in enumerate(doc):
+        with open_pdf(pdf_path, doc) as opened:
+            for index, page in enumerate(opened):
                 page_num = index + 1
                 finder = getattr(page, "find_tables", None)
                 if finder is None:

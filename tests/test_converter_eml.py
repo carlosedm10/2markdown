@@ -1,8 +1,8 @@
-"""Tests for .eml conversion (src.converter.eml)."""
+"""Tests for .eml conversion (twomarkdown.converter.eml)."""
 
 from pathlib import Path
 
-from src.converter.eml import convert_eml, is_email
+from twomarkdown.converter.eml import convert_eml, is_email
 
 
 def _write_sample_eml(path: Path) -> None:

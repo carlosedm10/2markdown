@@ -5,7 +5,7 @@ from pathlib import Path
 
 from markitdown import MarkItDown
 
-from src.config import markitdown_config
+from twomarkdown.config import markitdown_config
 
 logger = logging.getLogger(__name__)
 

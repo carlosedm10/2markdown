@@ -1,4 +1,4 @@
-.env
+.ocr-mode
 .venv/
 __pycache__/
 *.py[cod]

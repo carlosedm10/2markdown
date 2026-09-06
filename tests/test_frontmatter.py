@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from src.frontmatter import build_frontmatter
-from src.language import guess_language
+from twomarkdown.frontmatter import build_frontmatter
+from twomarkdown.language import guess_language
 
 
 class TestGuessLanguage:

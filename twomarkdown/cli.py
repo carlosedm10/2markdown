@@ -6,9 +6,9 @@ from typing import Literal
 
 import typer
 
-from src.batch.processor import process_batch
-from src.config import conversion_config, llm_config, pdf_ocr_config
-from src.paths import normalize_batch_input
+from twomarkdown.batch.processor import process_batch
+from twomarkdown.config import conversion_config, llm_config, pdf_ocr_config
+from twomarkdown.paths import normalize_batch_input
 
 app = typer.Typer(
     name="twomarkdown",

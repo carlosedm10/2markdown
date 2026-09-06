@@ -5,11 +5,12 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-from src.config import IWORK_BUNDLE_SUFFIXES, conversion_config
+from twomarkdown.config import IWORK_BUNDLE_SUFFIXES, conversion_config
 
 _PDF_MAGIC = b"%PDF"
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGICS = (b"\xff\xd8\xff",)
+_TIFF_MAGICS = (b"II*\x00", b"MM\x00*")
 _ZIP_MAGIC = b"PK"
 _EMAIL_HEADERS = ("From:", "Received:", "Subject:")
 
@@ -75,6 +76,12 @@ def sniff_suffix(path: Path) -> str | None:
         sniffed = ".png"
     elif any(prefix.startswith(magic) for magic in _JPEG_MAGICS):
         sniffed = ".jpg"
+    elif any(prefix.startswith(magic) for magic in _TIFF_MAGICS):
+        sniffed = ".tiff"
+    elif len(prefix) >= 12 and prefix[4:8] == b"ftyp" and any(
+        tag in prefix[8:16] for tag in (b"heic", b"heif", b"mif1", b"msf1")
+    ):
+        sniffed = ".heic"
     elif prefix.startswith(_ZIP_MAGIC):
         sniffed = _sniff_zip_suffix(path)
     elif _looks_like_html(prefix):

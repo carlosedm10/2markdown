@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from src.config import conversion_config
+from twomarkdown.config import conversion_config
 
 
 def _is_table_line(line: str) -> bool:

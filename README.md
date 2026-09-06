@@ -17,7 +17,7 @@ make build ollama       # Ollama vision OCR — higher quality on images & scann
 make up                 # optional: keep backend container + host Ollama running
 ```
 
-`make fresh-setup` writes a secrets-only `.env` from the template and tears the stack down (`make down`). Tuning lives in `src/config.py`.
+`make fresh-setup` writes a secrets-only `.env` from the template and tears the stack down (`make down`). Tuning lives in `twomarkdown/config.py`. OCR engine selection is stored in gitignored `.ocr-mode` (`make build` / `make build ollama`).
 
 `make build` builds the converter image and locks in your OCR mode:
 
@@ -30,21 +30,24 @@ make up                 # optional: keep backend container + host Ollama running
 
 To switch OCR mode later, run the other `make build` variant again.
 
-The converter reaches host Ollama at `http://host.docker.internal:11434/v1` (default in `src/config.py`).
+The converter reaches host Ollama at `http://host.docker.internal:11434/v1` (default in `twomarkdown/config.py`).
 
-**OCR flags:** `--ocr-backend=ollama` enables the vision LLM (no silent Tesseract fallback). `--ollama` is a shortcut for the same. Default Tesseract language is `eng+spa` (`tesseract_lang` in `src/config.py`).
+**OCR flags:** `--ocr-backend=ollama` enables the vision LLM (no silent Tesseract fallback). `--ollama` is a shortcut for the same. Default Tesseract language is `eng+spa` (`tesseract_lang` in `twomarkdown/config.py`).
 
 ## Convert
 
 ```bash
 make process INPUT="/Users/you/Documents/reports"
 make process INPUT="/Users/you/Documents/report.pdf"
-make process INPUT="/Users/you/Documents/reports" VERBOSE=1   # verbose logs
-make process INPUT="/Users/you/Documents/reports" DRY_RUN=1  # list files, write nothing
-make process INPUT="/Users/you/Documents/reports" WORKERS=4  # parallel files
+make process INPUT="/Users/you/Documents/reports" VERBOSE=1
+make process INPUT="/Users/you/Documents/reports" DRY_RUN=1
+make process INPUT="/Users/you/Documents/reports" WORKERS=4
+make process INPUT="/Users/you/Documents/reports" FORCE=1
+make process INPUT="/Users/you/Documents/report.pdf" OUTPUT="/tmp/out"
+make process INPUT="/Users/you/Documents/reports" OCR_BACKEND=ollama
 ```
 
-When `llm_enabled` is true in `src/config.py` (`make build ollama`), `make process` ensures host Ollama is running before converting.
+When OCR mode is Ollama (`make build ollama` writes `.ocr-mode`), `make process` ensures host Ollama is running before converting.
 
 ### What happens
 
@@ -58,8 +61,8 @@ When `llm_enabled` is true in `src/config.py` (`make build ollama`), `make proce
 | `/docs/report.pdf` (file) | `/docs/report_2markdown/report.md` |
 
 4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file (including OCR backend).
-5. Skip logic respects OCR backend: failed files are retried; switching Tesseract → Ollama re-converts. Pass `--force` to the CLI, or set `skip_existing = False` in `src/config.py`, to re-convert everything.
-6. `.md` source files are not reconverted unless `convert_existing_md = True` in `src/config.py`.
+5. Skip logic respects OCR backend: failed files are retried; switching Tesseract → Ollama re-converts. Pass `--force` to the CLI, or set `skip_existing = False` in `twomarkdown/config.py`, to re-convert everything.
+6. `.md` source files are not reconverted unless `convert_existing_md = True` in `twomarkdown/config.py`.
 
 ### Examples
 
@@ -74,7 +77,7 @@ make process INPUT="$HOME/Desktop/scan.pdf"
 
 ## Supported formats
 
-MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.zip`, `.msg`, `.wav`, `.mp3`.
+MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.tif`, `.tiff`, `.zip`, `.msg`, `.wav`, `.mp3`.
 
 **E-readers** (native parsers, not MarkItDown):
 
@@ -84,34 +87,24 @@ MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, 
 | `.fb2` | FictionBook sections and paragraphs |
 | `.mobi`, `.azw`, `.azw3` | Unpacked HTML → markdown chapters |
 | `.eml` | Native RFC 822 (From/To/Subject + body) |
-| `.xlsx` | Native sheets as `## Sheet:` + GFM tables |
-| `.doc`, `.ppt` | LibreOffice/`soffice` if on PATH (not in the default image) |
+| `.xlsx`, `.xlsm` | Native sheets as `## Sheet:` + GFM tables |
+| `.doc`, `.ppt`, `.xls`, `.odt`, `.ods`, `.odp`, `.rtf` | LibreOffice (`soffice`) in the image |
 
-Plain `.zip` archives are unpacked into the output tree and converted (Office/iWork zips are left intact). File type can be sniffed from magic bytes (`sniff_filetype` in `src/config.py`).
+Plain `.zip` archives are unpacked into the output tree and converted (Office/iWork zips are left intact). File type can be sniffed from magic bytes (`sniff_filetype` in `twomarkdown/config.py`).
 
-**Apple iWork** (directory bundles or zip archives on disk):
+**Apple iWork** (directory bundles or zip archives on disk). Conversion uses the bundled **`preview.pdf`** and the same PDF pipeline as a normal PDF. No IWA parser, Kreuzberg, or Pages.app.
 
-| Format | Default backend | Notes |
-|--------|-----------------|-------|
-| `.numbers` | [numbers-parser](https://pypi.org/project/numbers-parser/) | Tables → markdown |
-| `.key` | [keynote-parser](https://pypi.org/project/keynote-parser/) | Slide text from IWA archives |
-| `.pages` | `preview.pdf` when present, else IWA text | Weaker than export; see below |
+| Format | Notes |
+|--------|-------|
+| `.pages`, `.key`, `.numbers` | Requires `preview.pdf` inside the bundle. Missing preview → that file fails, the batch continues. |
 
-Embedded files inside a bundle (e.g. `MyDoc.pages/Data/*.png`) are **not** separate batch items. Raster images under `Data/` are listed in the bundle markdown and OCR'd when OCR is on.
+Numbers is the rendered preview, not per-sheet GFM tables. To keep layout, export PDF from the Apple app first if the bundle has no preview.
 
-Optional **Kreuzberg** backend for stronger Pages coverage (Elastic-2.0 license):
+Raster extras (opt-in, not in the default image): `make uv-sync EXTRA=heic` for `.heic`/`.heif`, `make uv-sync EXTRA=svg` for `.svg`. Without the extra, those files soft-fail with that Make command in the error.
 
-Kreuzberg is an optional extra (`iwork-kreuzberg`) and is **not** in the default image. There is no `make` target for extras yet (see `INCONSISTENCIES.md`).
+Local audio: `make uv-sync EXTRA=audio-whisper` transcribes `.wav`/`.mp3` with CPU Whisper before MarkItDown. Without the extra, audio still goes to MarkItDown (or fails that file, not the batch).
 
-Set `iwork_backend = "kreuzberg"` in `src/config.py`.
-
-`.doc`/`.ppt` convert via LibreOffice when `soffice` is on PATH; otherwise that file fails and the batch continues. Video files still soft-fail.
-
-### iWork limitations
-
-- Floating text boxes in Pages may be missing without `preview.pdf` or Kreuzberg
-- Videos inside `Data/` are not transcribed
-- Very new Keynote versions may need an updated `keynote-parser`
+Video files still soft-fail.
 
 ## Scanned PDFs
 
@@ -119,11 +112,11 @@ OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has 
 
 If Tesseract confidence is below `ocr_confidence_min` and Ollama is enabled, 2markdown retries that image with the vision model (`ocr_hybrid`).
 
-**Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` (that also updates `OLLAMA_VISION_MODEL` in `src/config.py`).
+**Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` (that also updates `.ocr-mode`).
 
 ## Configuration
 
-Feature flags and tuning live in [`src/config.py`](src/config.py). `.env` is secrets only (`make fresh-setup` copies `env_template`). `make build` / `make build ollama` rewrites the OCR-mode constants at the top of `src/config.py`.
+Feature flags and tuning live in [`twomarkdown/config.py`](twomarkdown/config.py). `.env` is secrets only (`make fresh-setup` copies `env_template`). `make build` / `make build ollama` write gitignored `.ocr-mode` instead of editing `config.py`.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
@@ -145,10 +138,9 @@ Feature flags and tuning live in [`src/config.py`](src/config.py). `.env` is sec
 | `pdf_ocr_dpi` | `200` | Rasterization quality for page OCR |
 | `ollama_base_url` | `http://host.docker.internal:11434/v1` | Host Ollama API (Docker → host) |
 | `ollama_vision_model` | `ollama:moondream` | Vision model (`make build ollama OLLAMA_MODEL=…`) |
-| `iwork_enabled` | `true` | Convert `.pages` / `.key` / `.numbers` bundles |
-| `iwork_backend` | `native` | `native` or `kreuzberg` (optional extra) |
+| `iwork_enabled` | `true` | Convert `.pages` / `.key` / `.numbers` via `preview.pdf` |
 
-Credentials belong in `.env` and are loaded by `Secrets` in `src/config.py` (empty until a feature needs a key).
+Credentials belong in `.env` and are loaded by `Secrets` in `twomarkdown/config.py` (empty until a feature needs a key).
 
 ## Makefile reference
 
@@ -160,7 +152,20 @@ Credentials belong in `.env` and are loaded by `Secrets` in `src/config.py` (emp
 | `up` | Start backend container (+ host Ollama if LLM enabled) |
 | `down` | `docker compose down --remove-orphans` |
 | `restart` | Restart the backend container |
-| `process INPUT=...` | Convert (mounts input + output only; `VERBOSE=1`, `DRY_RUN=1`, `WORKERS=n`) |
+| `process INPUT=...` | Convert (`VERBOSE=1`, `DRY_RUN=1`, `WORKERS=n`, `FORCE=1`, `OCR_BACKEND=`, `OUTPUT=`, `NO_OCR=1`, `EMIT_CHUNKS=1`) |
+
+Make variables forwarded into the Typer CLI:
+
+| Make | CLI |
+|------|-----|
+| `VERBOSE=1` | `-v` |
+| `DRY_RUN=1` | `--dry-run` |
+| `WORKERS=n` | `--workers n` |
+| `FORCE=1` | `--force` |
+| `OCR_BACKEND=tesseract\|ollama` | `--ocr-backend …` |
+| `OUTPUT=/path` | `--output` (also bind-mounted) |
+| `NO_OCR=1` | `--no-ocr` |
+| `EMIT_CHUNKS=1` | `--emit-chunks` |
 | `stop-ollama` | Stop host Ollama |
 | `test` | Unit tests (`TEST=` for one path) |
 
@@ -174,6 +179,7 @@ Maintainer targets all run **inside Docker**. Do not run `uv add` / `uv lock` on
 | `make uv-remove PKG=pkg` | Remove a dependency |
 | `make uv-lock` | Refresh `uv.lock` |
 | `make uv-lock-regenerate` | Regenerate the lock file from scratch |
+| `make uv-sync EXTRA=heic` | Install an optional extra (`heic`, `svg`, `audio-whisper`) plus `dev` |
 | `make uv-update` / `make uv-update PKG=foo` | Upgrade all packages, or one |
 | `make lint` / `make lint-fix` / `make format` | Ruff check, auto-fix, format |
 | `make test` / `make test TEST=path` | Unit tests |
@@ -184,6 +190,6 @@ GitHub Actions calls `make lint` and `make test` (`CI=true` → native `uv`). Op
 
 ## Notes
 
-- Remote image URLs are not fetched unless `fetch_remote_images` is true in `src/config.py` (or `--fetch-remote-images`)
-- Audio transcription may call external services via MarkItDown extras
+- Remote image URLs are not fetched unless `fetch_remote_images` is true in `twomarkdown/config.py` (or `--fetch-remote-images`)
+- Audio transcription may call external services via MarkItDown unless extra `audio-whisper` is installed
 - Only local paths are processed — no URL or YouTube ingestion

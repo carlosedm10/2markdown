@@ -27,18 +27,45 @@ class FileRecord:
     char_count: int | None = None
 
 
+def _hash_file_bytes(path: Path, hasher: Any, *, remaining: int) -> int:
+    with path.open("rb") as handle:
+        while remaining > 0:
+            chunk = handle.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            hasher.update(chunk)
+            remaining -= len(chunk)
+    return remaining
+
+
+def _dir_checksum(path: Path, *, max_bytes: int) -> str:
+    hasher = hashlib.sha256()
+    remaining = max_bytes
+    files = sorted(
+        candidate
+        for candidate in path.rglob("*")
+        if candidate.is_file()
+        and not any(part.startswith(".") for part in candidate.relative_to(path).parts)
+    )
+    for file_path in files:
+        rel = file_path.relative_to(path).as_posix().encode()
+        hasher.update(rel)
+        hasher.update(b"\0")
+        remaining = _hash_file_bytes(file_path, hasher, remaining=remaining)
+        hasher.update(b"\n")
+        if remaining <= 0:
+            break
+    return hasher.hexdigest()
+
+
 def file_checksum(path: Path, *, max_bytes: int = 32_000_000) -> str | None:
-    """SHA-256 of the file (or prefix if huge)."""
+    """SHA-256 of a file, or of a directory tree (relative paths + contents)."""
     try:
+        resolved = path.resolve()
+        if resolved.is_dir():
+            return _dir_checksum(resolved, max_bytes=max_bytes)
         hasher = hashlib.sha256()
-        with path.open("rb") as handle:
-            remaining = max_bytes
-            while remaining > 0:
-                chunk = handle.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    break
-                hasher.update(chunk)
-                remaining -= len(chunk)
+        _hash_file_bytes(resolved, hasher, remaining=max_bytes)
         return hasher.hexdigest()
     except OSError:
         return None
@@ -101,6 +128,7 @@ class Manifest:
             duration_ms=duration_ms,
             char_count=char_count,
         )
+        self.save()
 
     def should_skip(
         self,

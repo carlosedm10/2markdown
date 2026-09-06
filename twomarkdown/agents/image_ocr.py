@@ -10,9 +10,9 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.providers import infer_provider
 from pydantic_ai.providers.ollama import OllamaProvider
 
-from src.config import llm_config
-from src.converter.image_prep import prepare_image_for_vision_llm
-from src.prompts import FIGURE_DESCRIBE_PROMPT, IMAGE_OCR_PROMPT
+from twomarkdown.config import llm_config
+from twomarkdown.converter.image_prep import prepare_image_for_vision_llm
+from twomarkdown.prompts import FIGURE_DESCRIBE_PROMPT, IMAGE_OCR_PROMPT
 
 logger = logging.getLogger(__name__)
 

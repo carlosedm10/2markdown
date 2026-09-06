@@ -5,7 +5,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-from src.converter.filetype import sniff_suffix
+from twomarkdown.converter.filetype import sniff_suffix
 
 _OFFICE_ZIP_SUFFIXES = frozenset({".docx", ".xlsx", ".pptx"})
 _IWORK_ZIP_SUFFIXES = frozenset({".pages", ".key", ".numbers"})

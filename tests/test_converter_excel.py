@@ -1,11 +1,11 @@
-"""Tests for Excel conversion (src.converter.excel)."""
+"""Tests for Excel conversion (twomarkdown.converter.excel)."""
 
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from src.converter.excel import (
+from twomarkdown.converter.excel import (
     ExcelConversionError,
     convert_xlsx,
     rows_to_markdown_table,

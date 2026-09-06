@@ -1,9 +1,11 @@
-"""Test cases for batch conversion (src.batch.processor)."""
+"""Test cases for batch conversion (twomarkdown.batch.processor)."""
 
+import json
+import time
 from pathlib import Path
 from unittest.mock import patch
 
-from src.batch.processor import process_batch
+from twomarkdown.batch.processor import process_batch
 
 
 class TestBatchProcessor:
@@ -25,11 +27,11 @@ class TestBatchProcessor:
         bad.write_bytes(b"\x00\x01\x02")
 
         with patch(
-            "src.batch.walker.conversion_config.include_extensions",
+            "twomarkdown.batch.walker.conversion_config.include_extensions",
             frozenset({".txt", ".bin"}),
         ):
             with patch(
-                "src.converter.markitdown_converter.convert_file",
+                "twomarkdown.converter.markitdown_converter.convert_file",
                 side_effect=lambda p: "converted" if p.name == "good.txt" else "",
             ):
                 result = process_batch(
@@ -60,11 +62,11 @@ class TestBatchProcessor:
         img.write_bytes(minimal_png_bytes)
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
             return_value="",
         ):
             with patch(
-                "src.converter.ocr.ocr_image_bytes",
+                "twomarkdown.converter.ocr.ocr_image_bytes",
                 return_value="Diagram text",
             ):
                 result = process_batch(
@@ -88,11 +90,11 @@ class TestBatchProcessor:
         bad.write_bytes(b"\x00")
 
         with patch(
-            "src.batch.walker.conversion_config.include_extensions",
+            "twomarkdown.batch.walker.conversion_config.include_extensions",
             frozenset({".bin"}),
         ):
             with patch(
-                "src.converter.markitdown_converter.convert_file",
+                "twomarkdown.converter.markitdown_converter.convert_file",
                 return_value="",
             ):
                 process_batch(
@@ -123,7 +125,7 @@ class TestBatchProcessor:
         source.write_text("Quarterly report")
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
             return_value="Quarterly report",
         ):
             result = process_batch(
@@ -156,7 +158,7 @@ class TestBatchProcessor:
         output_md.write_text("---\nsource: stale.txt\n---\n\nold")
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
         ) as mock_convert:
             result = process_batch(
                 input_dir,
@@ -180,15 +182,15 @@ class TestBatchProcessor:
         (pages / "preview.pdf").write_bytes(b"%PDF-1.4\n")
 
         with patch(
-            "src.converter.iwork.is_iwork_bundle",
+            "twomarkdown.converter.iwork.is_iwork_bundle",
             return_value=True,
         ):
             with patch(
-                "src.converter.iwork.convert_bundle",
+                "twomarkdown.converter.iwork.convert_bundle",
                 return_value="Page body text",
             ) as mock_iwork:
                 with patch(
-                    "src.converter.markitdown_converter.convert_file",
+                    "twomarkdown.converter.markitdown_converter.convert_file",
                 ) as mock_markitdown:
                     result = process_batch(
                         input_dir,
@@ -212,15 +214,15 @@ class TestBatchProcessor:
         epub.write_bytes(b"minimal epub")
 
         with patch(
-            "src.converter.ereader.is_ereader",
+            "twomarkdown.converter.ereader.is_ereader",
             return_value=True,
         ):
             with patch(
-                "src.converter.ereader.convert_ereader",
+                "twomarkdown.converter.ereader.convert_ereader",
                 return_value="EPUB body",
             ) as mock_ereader:
                 with patch(
-                    "src.converter.markitdown_converter.convert_file",
+                    "twomarkdown.converter.markitdown_converter.convert_file",
                 ) as mock_markitdown:
                     result = process_batch(
                         input_dir,
@@ -254,3 +256,117 @@ class TestBatchProcessor:
         assert result.converted == 0
         assert str(source.resolve()) in result.planned
         assert not (output_dir / "notes.md").exists()
+
+    def test_process_batch_times_out_sequential_file(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — sequential worker records timeout without waiting forever."""
+        input_dir, output_dir = batch_dirs
+        hung = input_dir / "slow.txt"
+        hung.write_text("slow")
+        fast = input_dir / "fast.txt"
+        fast.write_text("fast")
+
+        def convert(path: Path) -> str:
+            if path.name == "slow.txt":
+                time.sleep(5)
+            return "ok"
+
+        with (
+            patch("twomarkdown.batch.processor.conversion_config.file_timeout_sec", 0.2),
+            patch("twomarkdown.batch.processor.conversion_config.parallel_workers", 1),
+            patch(
+                "twomarkdown.converter.markitdown_converter.convert_file",
+                side_effect=convert,
+            ),
+        ):
+            result = process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+                show_progress=False,
+            )
+
+        assert result.failed == 1
+        assert result.converted == 1
+        assert any("timeout after" in (p or "") for p in result.failed_paths) or (
+            str(hung.resolve()) in result.failed_paths
+        )
+        payload = json.loads(
+            (output_dir / ".2markdown-manifest.json").read_text(encoding="utf-8")
+        )
+        hung_record = payload["files"][str(hung.resolve())]
+        assert hung_record["status"] == "failed"
+        assert "timeout" in (hung_record["error"] or "")
+
+    def test_process_batch_times_out_parallel_file(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — parallel workers time out from submit, not as_completed."""
+        input_dir, output_dir = batch_dirs
+        hung = input_dir / "slow.txt"
+        hung.write_text("slow")
+        fast = input_dir / "fast.txt"
+        fast.write_text("fast")
+
+        def convert(path: Path) -> str:
+            if path.name == "slow.txt":
+                time.sleep(5)
+            return "ok"
+
+        with (
+            patch("twomarkdown.batch.processor.conversion_config.file_timeout_sec", 0.2),
+            patch("twomarkdown.batch.processor.conversion_config.parallel_workers", 2),
+            patch(
+                "twomarkdown.converter.markitdown_converter.convert_file",
+                side_effect=convert,
+            ),
+        ):
+            result = process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+                show_progress=False,
+            )
+
+        assert result.failed == 1
+        assert result.converted == 1
+        assert str(hung.resolve()) in result.failed_paths
+
+    def test_process_batch_manifest_has_first_file_before_second_converts(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — manifest is on disk after the first file is recorded."""
+        input_dir, output_dir = batch_dirs
+        first = input_dir / "a.txt"
+        second = input_dir / "b.txt"
+        first.write_text("one")
+        second.write_text("two")
+        seen_first = {"ok": False}
+
+        def convert(path: Path) -> str:
+            if path.name == "b.txt":
+                payload = json.loads(
+                    (output_dir / ".2markdown-manifest.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                record = payload["files"].get(str(first.resolve()))
+                seen_first["ok"] = record is not None and record["status"] == "ok"
+            return "converted"
+
+        with patch(
+            "twomarkdown.converter.markitdown_converter.convert_file",
+            side_effect=convert,
+        ):
+            process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+                show_progress=False,
+            )
+
+        assert seen_first["ok"] is True

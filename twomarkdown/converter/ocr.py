@@ -11,11 +11,13 @@ import pytesseract
 import requests
 from PIL import Image, ImageOps
 
-from src.config import conversion_config
+from twomarkdown.config import conversion_config
 
 logger = logging.getLogger(__name__)
 
-RASTER_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
+RASTER_IMAGE_SUFFIXES = frozenset(
+    {".png", ".jpg", ".jpeg", ".gif", ".webp", ".tif", ".tiff", ".heic", ".heif"}
+)
 
 IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
@@ -178,8 +180,8 @@ def describe_image_bytes(image_bytes: bytes) -> str:
     if not conversion_config.describe_figures:
         return ""
     try:
-        from src.agents.image_ocr import describe_image_bytes_llm
-        from src.config import llm_config
+        from twomarkdown.agents.image_ocr import describe_image_bytes_llm
+        from twomarkdown.config import llm_config
 
         if not llm_config.llm_enabled:
             return ""
@@ -191,6 +193,26 @@ def describe_image_bytes(image_bytes: bytes) -> str:
 
 def _format_ocr_block(text: str) -> str:
     return f"\n### [OCR]\n\n{text}\n"
+
+
+def _register_heif() -> None:
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+    except ImportError as exc:
+        raise RuntimeError("HEIC support requires: make uv-sync EXTRA=heic") from exc
+
+
+def _image_bytes_for_ocr(path: Path) -> bytes:
+    suffix = path.suffix.lower()
+    if suffix == ".svg":
+        from twomarkdown.converter.image_prep import rasterize_svg
+
+        return rasterize_svg(path)
+    if suffix in {".heic", ".heif"}:
+        _register_heif()
+    return path.read_bytes()
 
 
 def convert_image_file(
@@ -205,7 +227,7 @@ def convert_image_file(
     if not conversion_config.ocr_enabled:
         return existing_markdown
 
-    ocr_text = ocr_image_bytes(path.read_bytes(), ocr_fn=ocr_fn)
+    ocr_text = ocr_image_bytes(_image_bytes_for_ocr(path), ocr_fn=ocr_fn)
     if not ocr_text:
         return existing_markdown
 

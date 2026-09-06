@@ -1,5 +1,6 @@
+import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,6 +11,7 @@ DEFAULT_INCLUDE_EXTENSIONS = frozenset(
         ".docx",
         ".pptx",
         ".xlsx",
+        ".xlsm",
         ".xls",
         ".html",
         ".htm",
@@ -29,11 +31,20 @@ DEFAULT_INCLUDE_EXTENSIONS = frozenset(
         ".jpeg",
         ".gif",
         ".webp",
+        ".tif",
+        ".tiff",
+        ".heic",
+        ".heif",
+        ".svg",
         ".wav",
         ".mp3",
         ".zip",
         ".msg",
         ".eml",
+        ".odt",
+        ".ods",
+        ".odp",
+        ".rtf",
         ".doc",
         ".ppt",
         ".pages",
@@ -46,15 +57,33 @@ IWORK_BUNDLE_SUFFIXES = frozenset({".pages", ".key", ".numbers"})
 
 SKIP_DIR_NAMES = frozenset({".git", "__pycache__", ".venv", "node_modules"})
 
-# --- OCR mode (rewritten by scripts/set_ocr_mode.py via make build) ---
+# Fallbacks when .ocr-mode is absent. `make build` writes .ocr-mode, not this file.
 OCR_BACKEND: Literal["tesseract", "ollama"] = "tesseract"
 LLM_ENABLED = False
 OLLAMA_VISION_MODEL = "ollama:moondream"
-# --- end OCR mode ---
+
+
+def _load_ocr_mode_file() -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[1] / ".ocr-mode"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+
+
+_ocr_mode = _load_ocr_mode_file()
+if _ocr_mode.get("backend") in {"tesseract", "ollama"}:
+    OCR_BACKEND = _ocr_mode["backend"]
+    LLM_ENABLED = OCR_BACKEND == "ollama" or bool(_ocr_mode.get("llm_enabled"))
+if isinstance(_ocr_mode.get("vision_model"), str) and _ocr_mode["vision_model"]:
+    OLLAMA_VISION_MODEL = _ocr_mode["vision_model"]
 
 
 class ConversionConfig(BaseModel):
-    """Batch and OCR defaults. Edit here; not read from `.env`."""
+    """Batch and OCR defaults. Edit here; OCR engine also reads `.ocr-mode`."""
 
     input_dir: Path = Path(".")
     output_dir: Path = Path(".")
@@ -105,8 +134,6 @@ class MarkItDownConfig(BaseModel):
 
 class IWorkConfig(BaseModel):
     iwork_enabled: bool = True
-    iwork_backend: Literal["native", "kreuzberg"] = "native"
-    iwork_use_app_export: bool = False
 
 
 class Secrets(BaseSettings):

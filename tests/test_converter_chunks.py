@@ -1,9 +1,9 @@
-"""Tests for markdown chunking (src.converter.chunks)."""
+"""Tests for markdown chunking (twomarkdown.converter.chunks)."""
 
 import json
 from pathlib import Path
 
-from src.converter.chunks import chunk_markdown, write_chunks_sidecar
+from twomarkdown.converter.chunks import chunk_markdown, write_chunks_sidecar
 
 
 class TestChunkMarkdown:

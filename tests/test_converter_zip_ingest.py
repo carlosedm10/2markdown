@@ -1,11 +1,11 @@
-"""Tests for zip ingestion (src.converter.zip_ingest)."""
+"""Tests for zip ingestion (twomarkdown.converter.zip_ingest)."""
 
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from src.converter.zip_ingest import extract_zip, is_explodable_zip
+from twomarkdown.converter.zip_ingest import extract_zip, is_explodable_zip
 
 
 def _write_zip(path: Path, members: dict[str, bytes]) -> None:

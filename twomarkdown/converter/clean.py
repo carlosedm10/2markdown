@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable
 
-from src.config import conversion_config
+from twomarkdown.config import conversion_config
 
 
 def _utf8_as_latin1(byte_seq: bytes) -> str:

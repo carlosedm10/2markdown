@@ -1,6 +1,6 @@
-"""Test OCR backend flag resolution (src.cli.resolve_ocr_backend)."""
+"""Test OCR backend flag resolution (twomarkdown.cli.resolve_ocr_backend)."""
 
-from src.cli import resolve_ocr_backend
+from twomarkdown.cli import resolve_ocr_backend
 
 
 class TestResolveOcrBackend:

@@ -1,12 +1,12 @@
-"""Test cases for scanned PDF OCR fallback (src.converter.pdf_ocr)."""
+"""Test cases for scanned PDF OCR fallback (twomarkdown.converter.pdf_ocr)."""
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import fitz
 
-from src.config import pdf_ocr_config
-from src.converter import pdf_ocr
+from twomarkdown.config import pdf_ocr_config
+from twomarkdown.converter import pdf_ocr
 
 LONG_TEXT = "x" * pdf_ocr_config.pdf_ocr_min_chars
 SHORT_TEXT = "scan"
@@ -81,7 +81,8 @@ class TestPdfOcrFallback:
         mixed = _make_pdf(tmp_path / "mixed.pdf", [LONG_TEXT, ""])
         ocr_fn = MagicMock(return_value="OCR-P2")
 
-        pages = pdf_ocr.extract_pages(mixed, ocr_fn=ocr_fn)
+        with patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", False):
+            pages = pdf_ocr.extract_pages(mixed, ocr_fn=ocr_fn)
 
         ocr_fn.assert_called_once()
         assert pages == [(2, "OCR-P2")]
@@ -96,7 +97,8 @@ class TestPdfOcrFallback:
         digital = _make_pdf(tmp_path / "digital.pdf", [LONG_TEXT])
         ocr_fn = MagicMock(return_value="should not run")
 
-        pages = pdf_ocr.extract_pages(digital, ocr_fn=ocr_fn)
+        with patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", False):
+            pages = pdf_ocr.extract_pages(digital, ocr_fn=ocr_fn)
 
         ocr_fn.assert_not_called()
         assert pages == []
@@ -106,7 +108,8 @@ class TestPdfOcrFallback:
         empty = _make_pdf(tmp_path / "empty.pdf", ["", ""])
         ocr_fn = MagicMock(side_effect=["OCR-P1", "OCR-P2"])
 
-        pages = pdf_ocr.extract_pages(empty, ocr_fn=ocr_fn)
+        with patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", False):
+            pages = pdf_ocr.extract_pages(empty, ocr_fn=ocr_fn)
 
         assert ocr_fn.call_count == 2
         assert pages == [(1, "OCR-P1"), (2, "OCR-P2")]
@@ -154,3 +157,25 @@ class TestPdfOcrFallback:
         assert "### OCR" in composed
         assert "SCANNED" in composed
         assert "```" not in composed
+
+    def test_extract_pages_hybrid_calls_llm_when_tesseract_confidence_low(
+        self, tmp_path: Path
+    ) -> None:
+        """extract_pages() — hybrid OCR uses ocr_fn when Tesseract confidence is low."""
+        empty = _make_pdf(tmp_path / "scan.pdf", [""])
+        llm_fn = MagicMock(return_value="vision text")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_confidence_min", 60.0),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("", 10.0),
+            ),
+        ):
+            pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
+
+        llm_fn.assert_called_once()
+        assert pages == [(1, "vision text")]
+

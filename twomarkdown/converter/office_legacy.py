@@ -1,4 +1,4 @@
-"""Convert legacy Microsoft Office formats (.doc, .ppt) via LibreOffice."""
+"""Convert legacy Office and OpenDocument formats via LibreOffice."""
 
 from __future__ import annotations
 
@@ -13,11 +13,13 @@ class LegacyOfficeError(Exception):
     """Raised when legacy Office conversion cannot be performed."""
 
 
-_LEGACY_SUFFIXES = frozenset({".doc", ".ppt"})
+LEGACY_SUFFIXES = frozenset(
+    {".doc", ".ppt", ".xls", ".odt", ".ods", ".odp", ".rtf"}
+)
 
 
 def is_legacy_office(path: Path) -> bool:
-    return path.suffix.lower() in _LEGACY_SUFFIXES
+    return path.suffix.lower() in LEGACY_SUFFIXES
 
 
 def _find_soffice() -> str | None:
@@ -41,10 +43,12 @@ def _html_to_text(html: str) -> str:
 
 
 def convert_legacy_office(path: Path) -> str:
-    """Convert a legacy .doc or .ppt file to markdown text via LibreOffice."""
+    """Convert a legacy Office / OpenDocument file to markdown via LibreOffice."""
     soffice = _find_soffice()
     if soffice is None:
-        raise LegacyOfficeError("LibreOffice not installed")
+        raise LegacyOfficeError(
+            "LibreOffice not installed (soffice not on PATH)"
+        )
 
     path = path.resolve()
     suffix = path.suffix.lower()

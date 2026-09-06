@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import fitz
 from tqdm import tqdm
 
-from src.batch.manifest import Manifest, file_checksum
-from src.batch.ocr_cache import OcrCache
-from src.batch.walker import discover_files
-from src.config import conversion_config, iwork_config
-from src.converter import ereader, iwork, markitdown_converter, ocr, pdf_ocr
-from src.converter.markitdown_converter import ConversionError
-from src.frontmatter import build_frontmatter
+from twomarkdown.batch.manifest import Manifest, file_checksum
+from twomarkdown.batch.ocr_cache import OcrCache
+from twomarkdown.batch.walker import discover_files
+from twomarkdown.config import conversion_config, iwork_config, llm_config
+from twomarkdown.converter import ereader, iwork, markitdown_converter, ocr, pdf_ocr
+from twomarkdown.converter.markitdown_converter import ConversionError
+from twomarkdown.frontmatter import build_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,7 @@ def _get_ocr_fn() -> Callable[[bytes], str] | None:
     if not conversion_config.ocr_enabled:
         return None
     if conversion_config.ocr_backend == "ollama":
-        from src.agents.image_ocr import ocr_image_bytes_llm
+        from twomarkdown.agents.image_ocr import ocr_image_bytes_llm
 
         return ocr_image_bytes_llm
     return ocr.extract_text_with_tesseract
@@ -76,7 +78,7 @@ def _resolve_show_progress(show_progress: bool | None, *, verbose: bool) -> bool
 
 def _effective_suffix(path: Path) -> str:
     try:
-        from src.converter.filetype import effective_suffix
+        from twomarkdown.converter.filetype import effective_suffix
 
         return effective_suffix(path)
     except Exception:
@@ -85,7 +87,7 @@ def _effective_suffix(path: Path) -> str:
 
 def _clean(markdown: str) -> str:
     try:
-        from src.converter.clean import clean_markdown
+        from twomarkdown.converter.clean import clean_markdown
 
         return clean_markdown(markdown)
     except Exception:
@@ -93,42 +95,64 @@ def _clean(markdown: str) -> str:
 
 
 def _compose_pdf(
-    markdown: str, source_path: Path, *, show_progress: bool = False
+    markdown: str,
+    source_path: Path,
+    *,
+    ocr_fn: Callable[[bytes], str] | None = None,
+    show_progress: bool = False,
+    doc: fitz.Document | None = None,
 ) -> tuple[str, list[int]]:
-    ocr_fn = _get_ocr_fn() or ocr.extract_text_with_tesseract
+    engine = ocr_fn or _get_ocr_fn() or ocr.extract_text_with_tesseract
     ocr_pages: list[tuple[int, str]] = []
-    if pdf_ocr.should_fallback(markdown, suffix=".pdf", pdf_path=source_path):
-        if not show_progress:
-            logger.info("Scanned PDF detected, running page OCR: %s", source_path)
-        ocr_pages = pdf_ocr.extract_pages(
-            source_path, ocr_fn=ocr_fn, show_progress=show_progress
-        )
-
-    tables: list[tuple[int, str]] = []
+    close = False
+    opened = doc
+    if opened is None:
+        opened = fitz.open(source_path)
+        close = True
     try:
-        from src.converter.tables import extract_pdf_tables
+        if pdf_ocr.should_fallback(
+            markdown, suffix=".pdf", pdf_path=source_path, doc=opened
+        ):
+            if not show_progress:
+                logger.info("Scanned PDF detected, running page OCR: %s", source_path)
+            ocr_pages = pdf_ocr.extract_pages(
+                source_path,
+                ocr_fn=engine,
+                show_progress=show_progress,
+                doc=opened,
+            )
 
-        tables = extract_pdf_tables(source_path)
-    except Exception as exc:
-        logger.debug("PDF table extract skipped: %s", exc)
+        tables: list[tuple[int, str]] = []
+        try:
+            from twomarkdown.converter.tables import extract_pdf_tables
 
-    compose = getattr(pdf_ocr, "compose_pdf_markdown", None)
-    if callable(compose):
-        text = compose(
+            tables = extract_pdf_tables(source_path, doc=opened)
+        except Exception as exc:
+            logger.debug("PDF table extract skipped: %s", exc)
+
+        text = pdf_ocr.compose_pdf_markdown(
             pdf_path=source_path,
             markitdown_text=markdown,
             ocr_pages=ocr_pages,
             tables=tables,
+            doc=opened,
         )
-    else:
-        text = pdf_ocr.merge(markdown, ocr_pages)
+        return text, [n for n, _ in ocr_pages]
+    finally:
+        if close and opened is not None:
+            opened.close()
 
-    return text, [n for n, _ in ocr_pages]
 
-
-def _convert_pdf_with_ocr(pdf_path: Path, *, show_progress: bool = False) -> str:
+def _convert_pdf_with_ocr(
+    pdf_path: Path,
+    *,
+    ocr_fn: Callable[[bytes], str] | None = None,
+    show_progress: bool = False,
+) -> str:
     markdown = markitdown_converter.convert_file(pdf_path)
-    composed, _ = _compose_pdf(markdown, pdf_path, show_progress=show_progress)
+    composed, _ = _compose_pdf(
+        markdown, pdf_path, ocr_fn=ocr_fn, show_progress=show_progress
+    )
     return composed
 
 
@@ -137,7 +161,7 @@ def _maybe_excel(path: Path) -> str | None:
     if suffix not in {".xlsx", ".xlsm"}:
         return None
     try:
-        from src.converter.excel import convert_xlsx
+        from twomarkdown.converter.excel import convert_xlsx
 
         return convert_xlsx(path)
     except Exception as exc:
@@ -150,7 +174,7 @@ def _maybe_eml(path: Path) -> str | None:
     if suffix != ".eml":
         return None
     try:
-        from src.converter.eml import convert_eml
+        from twomarkdown.converter.eml import convert_eml
 
         return convert_eml(path)
     except Exception as exc:
@@ -160,34 +184,45 @@ def _maybe_eml(path: Path) -> str | None:
 
 def _maybe_legacy_office(path: Path) -> str | None:
     suffix = _effective_suffix(path)
-    if suffix not in {".doc", ".ppt"}:
+    from twomarkdown.converter.office_legacy import LEGACY_SUFFIXES, convert_legacy_office
+
+    if suffix not in LEGACY_SUFFIXES:
         return None
     try:
-        from src.converter.office_legacy import convert_legacy_office
-
         return convert_legacy_office(path)
     except ImportError as exc:
         raise ConversionError("LibreOffice converter unavailable") from exc
 
 
+def _maybe_audio(path: Path) -> str | None:
+    suffix = _effective_suffix(path)
+    if suffix not in {".wav", ".mp3"}:
+        return None
+    try:
+        from twomarkdown.converter.audio import convert_audio
+
+        return convert_audio(path)
+    except ImportError:
+        return None
+    except Exception as exc:
+        logger.debug("Local Whisper skipped: %s", exc)
+        return None
+
+
 def _convert_source_to_markdown(
-    source_path: Path, *, show_progress: bool = False
+    source_path: Path,
+    *,
+    ocr_fn: Callable[[bytes], str] | None = None,
+    show_progress: bool = False,
 ) -> str:
     suffix = _effective_suffix(source_path)
+    engine = ocr_fn if ocr_fn is not None else _get_ocr_fn()
 
     if iwork_config.iwork_enabled and iwork.is_iwork_bundle(source_path):
-        convert_pdf = None
-        if suffix == ".pages":
-            convert_pdf = lambda p: _convert_pdf_with_ocr(  # noqa: E731
-                p, show_progress=show_progress
-            )
-        markdown = iwork.convert_bundle(source_path, convert_pdf=convert_pdf)
-        embed = getattr(iwork, "embed_images_markdown", None)
-        if callable(embed):
-            extra = embed(source_path, ocr_fn=_get_ocr_fn())
-            if extra and extra.strip():
-                markdown = f"{markdown.rstrip()}\n\n{extra.strip()}\n"
-        return markdown
+        convert_pdf = lambda p: _convert_pdf_with_ocr(  # noqa: E731
+            p, ocr_fn=engine, show_progress=show_progress
+        )
+        return iwork.convert_bundle(source_path, convert_pdf=convert_pdf)
 
     if ereader.is_ereader(source_path):
         return ereader.convert_ereader(source_path)
@@ -204,15 +239,21 @@ def _convert_source_to_markdown(
     if native is not None:
         return native
 
+    native = _maybe_audio(source_path)
+    if native is not None:
+        return native
+
     markdown = markitdown_converter.convert_file(source_path)
     if suffix == ".pdf":
-        markdown, _ = _compose_pdf(markdown, source_path, show_progress=show_progress)
-    elif ocr.is_raster_image(source_path):
+        markdown, _ = _compose_pdf(
+            markdown, source_path, ocr_fn=engine, show_progress=show_progress
+        )
+    elif ocr.is_raster_image(source_path) or suffix == ".svg":
         if not show_progress:
             logger.info("Raster image OCR: %s", source_path)
         markdown = ocr.convert_image_file(
             source_path,
-            ocr_fn=_get_ocr_fn(),
+            ocr_fn=engine,
             existing_markdown=markdown,
         )
     return markdown
@@ -222,7 +263,7 @@ def _expand_zips(files: list[Path], output_dir: Path) -> list[Path]:
     if not conversion_config.explode_zip:
         return files
     try:
-        from src.converter.zip_ingest import extract_zip, is_explodable_zip
+        from twomarkdown.converter.zip_ingest import extract_zip, is_explodable_zip
     except Exception:
         return files
 
@@ -251,12 +292,17 @@ def _write_chunks(output_md: Path, markdown: str) -> None:
     if not conversion_config.emit_chunks:
         return
     try:
-        from src.converter.chunks import chunk_markdown, write_chunks_sidecar
+        from twomarkdown.converter.chunks import chunk_markdown, write_chunks_sidecar
 
         chunks = chunk_markdown(markdown)
         write_chunks_sidecar(output_md, chunks)
     except Exception as exc:
         logger.debug("Chunk sidecar skipped: %s", exc)
+
+
+def _cancelled(cancel: threading.Event | None) -> None:
+    if cancel is not None and cancel.is_set():
+        raise ConversionError("cancelled")
 
 
 def _convert_one(
@@ -266,8 +312,12 @@ def _convert_one(
     output_dir: Path,
     ocr_fn: Callable[[bytes], str] | None,
     show_progress: bool,
+    cancel: threading.Event | None = None,
 ) -> tuple[str, int]:
-    markdown = _convert_source_to_markdown(source_path, show_progress=show_progress)
+    _cancelled(cancel)
+    markdown = _convert_source_to_markdown(
+        source_path, ocr_fn=ocr_fn, show_progress=show_progress
+    )
     if not markdown or not markdown.strip():
         raise ConversionError("empty result")
 
@@ -279,12 +329,13 @@ def _convert_one(
         )
 
     markdown = _clean(markdown)
+    _cancelled(cancel)
 
     suffix = _effective_suffix(source_path)
     output_md = _mirror_output_path(source_path, input_dir, output_dir)
     if suffix == ".pdf" and conversion_config.extract_assets:
         try:
-            from src.converter.assets import extract_pdf_images, markdown_asset_index
+            from twomarkdown.converter.assets import extract_pdf_images, markdown_asset_index
 
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             extracted = extract_pdf_images(source_path, assets_dir)
@@ -294,11 +345,24 @@ def _convert_one(
         except Exception as exc:
             logger.debug("PDF asset extract skipped: %s", exc)
 
+    _cancelled(cancel)
     content = build_frontmatter(source_path, input_dir, markdown) + markdown
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(content, encoding="utf-8")
     _write_chunks(output_md, markdown)
     return str(output_md), len(markdown)
+
+
+def _timeout_item(
+    source_path: Path, timeout: float
+) -> tuple[Path, str, int | None, int, str | None]:
+    return (
+        source_path,
+        "failed",
+        int(timeout * 1000),
+        0,
+        f"timeout after {timeout}s",
+    )
 
 
 def process_batch(
@@ -317,7 +381,8 @@ def process_batch(
     skip_existing = (
         skip_existing if skip_existing is not None else conversion_config.skip_existing
     )
-    previous_ocr_enabled = conversion_config.ocr_enabled
+    previous_conversion = conversion_config.model_copy()
+    previous_llm = llm_config.model_copy()
     if ocr_enabled is not None:
         conversion_config.ocr_enabled = ocr_enabled
 
@@ -333,7 +398,12 @@ def process_batch(
         backend = (
             conversion_config.ocr_backend if conversion_config.ocr_enabled else "none"
         )
-        cache = OcrCache(output_dir / ".2markdown-ocr-cache")
+        cache = OcrCache(
+            output_dir / ".2markdown-ocr-cache",
+            backend=backend,
+            lang=conversion_config.tesseract_lang,
+            model=llm_config.ollama_vision_model if backend == "ollama" else "",
+        )
         ocr_fn = _cached_ocr_fn(_get_ocr_fn(), cache)
         use_progress = _resolve_show_progress(show_progress, verbose=verbose)
         workers = max(1, conversion_config.parallel_workers)
@@ -367,7 +437,9 @@ def process_batch(
                 continue
             work.append(source_path)
 
-        def _handle(source_path: Path) -> tuple[Path, str, int | None, int, str | None]:
+        def _handle(
+            source_path: Path, cancel: threading.Event | None
+        ) -> tuple[Path, str, int | None, int, str | None]:
             started = time.perf_counter()
             try:
                 _out, chars = _convert_one(
@@ -376,6 +448,7 @@ def process_batch(
                     output_dir=output_dir,
                     ocr_fn=ocr_fn,
                     show_progress=use_progress and workers == 1,
+                    cancel=cancel,
                 )
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 return source_path, "ok", duration_ms, chars, None
@@ -383,8 +456,13 @@ def process_batch(
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 return source_path, "failed", duration_ms, 0, str(exc)
 
+        consumed: set[Path] = set()
+
         def _consume(item: tuple[Path, str, int | None, int, str | None]) -> None:
             source_path, status, duration_ms, chars, error = item
+            if source_path in consumed:
+                return
+            consumed.add(source_path)
             checksum = file_checksum(source_path)
             output_md = _mirror_output_path(source_path, input_dir, output_dir)
             if status == "ok":
@@ -416,6 +494,24 @@ def process_batch(
             result.failed += 1
             result.failed_paths.append(str(source_path))
 
+        if not work:
+            return result
+
+        if not timeout:
+            with tqdm(
+                work,
+                desc="Converting",
+                unit="file",
+                disable=not use_progress,
+            ) as pbar:
+                for source_path in pbar:
+                    if use_progress:
+                        pbar.set_postfix_str(source_path.name, refresh=False)
+                    _consume(_handle(source_path, None))
+            return result
+
+        cancels = {path: threading.Event() for path in work}
+
         if workers == 1:
             with tqdm(
                 work,
@@ -426,55 +522,69 @@ def process_batch(
                 for source_path in pbar:
                     if use_progress:
                         pbar.set_postfix_str(source_path.name, refresh=False)
-                    if timeout:
-                        with ThreadPoolExecutor(max_workers=1) as pool:
-                            future = pool.submit(_handle, source_path)
-                            try:
-                                _consume(future.result(timeout=timeout))
-                            except FuturesTimeout:
-                                _consume(
-                                    (
-                                        source_path,
-                                        "failed",
-                                        int(timeout * 1000),
-                                        0,
-                                        f"timeout after {timeout}s",
-                                    )
-                                )
-                    else:
-                        _consume(_handle(source_path))
-        else:
-            from concurrent.futures import as_completed
+                    pool = ThreadPoolExecutor(max_workers=1)
+                    future = pool.submit(_handle, source_path, cancels[source_path])
+                    try:
+                        _consume(future.result(timeout=timeout))
+                    except FuturesTimeout:
+                        cancels[source_path].set()
+                        _consume(_timeout_item(source_path, timeout))
+                    finally:
+                        # Timed-out work may keep running; do not block the batch.
+                        pool.shutdown(wait=False)
+            return result
 
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                future_map = {
-                    pool.submit(_handle, source_path): source_path
-                    for source_path in work
-                }
-                with tqdm(
-                    total=len(future_map),
-                    desc="Converting",
-                    unit="file",
-                    disable=not use_progress,
-                ) as pbar:
-                    for future in as_completed(future_map):
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
+            future_map = {
+                pool.submit(_handle, source_path, cancels[source_path]): source_path
+                for source_path in work
+            }
+            deadlines = {future: time.monotonic() + timeout for future in future_map}
+            pending = set(future_map)
+            abandoned: set[object] = set()
+            with tqdm(
+                total=len(future_map),
+                desc="Converting",
+                unit="file",
+                disable=not use_progress,
+            ) as pbar:
+                while pending:
+                    now = time.monotonic()
+                    for future in list(pending):
+                        if now < deadlines[future]:
+                            continue
+                        pending.remove(future)
+                        abandoned.add(future)
+                        source_path = future_map[future]
+                        cancels[source_path].set()
+                        _consume(_timeout_item(source_path, timeout))
+                        pbar.update(1)
+                    if not pending:
+                        break
+                    wait_s = min(deadlines[f] for f in pending) - time.monotonic()
+                    done, _ = wait(
+                        pending,
+                        timeout=max(0.0, wait_s),
+                        return_when=FIRST_COMPLETED,
+                    )
+                    for future in done:
+                        if future not in pending:
+                            continue
+                        pending.remove(future)
+                        pbar.update(1)
+                        if future in abandoned:
+                            continue
                         source_path = future_map[future]
                         try:
-                            item = future.result(timeout=timeout)
-                        except FuturesTimeout:
-                            item = (
-                                source_path,
-                                "failed",
-                                int((timeout or 0) * 1000),
-                                0,
-                                f"timeout after {timeout}s",
-                            )
+                            item = future.result()
                         except Exception as exc:
                             item = (source_path, "failed", None, 0, str(exc))
                         _consume(item)
-                        pbar.update(1)
+        finally:
+            pool.shutdown(wait=False)
 
-        manifest.save()
         return result
     finally:
-        conversion_config.ocr_enabled = previous_ocr_enabled
+        conversion_config.ocr_enabled = previous_conversion.ocr_enabled
+        llm_config.llm_enabled = previous_llm.llm_enabled

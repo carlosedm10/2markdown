@@ -11,14 +11,14 @@ These names repeat in config, CLI flags, the manifest, and frontmatter. They *ar
 | **batch** | Walk input, convert each file, soft-fail, write sibling `*_2markdown/` |
 | **OCR backend** | `tesseract` (default, `eng+spa`) or `ollama` (host vision model); hybrid uses Tesseract confidence then vision |
 | **PDF page OCR** | Per-page native-text threshold; only weak pages are rasterized; tables and page headings stay in reading order |
-| **iWork bundle** | `.pages` / `.key` / `.numbers` as one unit; `Data/` images may be OCR'd into that markdown |
-| **e-reader** | `.epub` / `.fb2` / `.mobi` / `.azw` / `.azw3` via `src/converter/ereader.py` |
+| **iWork bundle** | `.pages` / `.key` / `.numbers` as one unit; convert the bundled `preview.pdf` through the PDF pipeline |
+| **e-reader** | `.epub` / `.fb2` / `.mobi` / `.azw` / `.azw3` via `twomarkdown/converter/ereader.py` |
 | **manifest** | `<output>/.2markdown-manifest.json` — status, `ocr_backend`, checksum, timing |
 
 ## How it's built
 
 ```
-CLI (src.cli) → paths → processor → walker (optional zip explode, magic-byte suffix)
+CLI (twomarkdown.cli) → paths → processor → walker (optional zip explode, magic-byte suffix)
                               ↓
          iWork | e-reader | eml | xlsx | legacy Office | MarkItDown
                               ↓
@@ -60,11 +60,15 @@ CLI (src.cli) → paths → processor → walker (optional zip explode, magic-by
 - **Native e-readers, not only MarkItDown** — EPUB spine order and FB2/MOBI needed their own module.
 - **Ollama is not stopped by `make down`** — tearing down Docker must not kill a host daemon other tools use (`make stop-ollama` is explicit).
 - **Tesseract then vision** — hybrid OCR spends GPU only when Tesseract confidence is low.
-- **Make is still the process CLI** — `VERBOSE`, `DRY_RUN`, and `WORKERS` are Make vars forwarded into `src.cli`; converter knobs live in `src/config.py`.
-- **Settings in code, secrets in `.env`** — flags and tuning are Pydantic `BaseModel` defaults; `Secrets` is the only `BaseSettings` class and reads `.env`.
+- **Make is still the process CLI** — `VERBOSE`, `DRY_RUN`, `WORKERS`, `FORCE`, `OCR_BACKEND`, `OUTPUT`, `NO_OCR`, and `EMIT_CHUNKS` are Make vars forwarded into the Typer CLI; converter knobs live in `twomarkdown/config.py`.
+- **OCR engine lives in `.ocr-mode`** — `make build` / `make build ollama` write that gitignored file instead of rewriting `twomarkdown/config.py`.
+- **iWork is `preview.pdf` only** — no IWA parsers, Kreuzberg, or AppleScript in Docker. Bundles without a preview soft-fail.
+- **LibreOffice is in the image** — `.doc` / `.ppt` / `.xls` / `.odt` / `.rtf` convert via `soffice`.
+- **Installable package is `twomarkdown`** — imports are `twomarkdown.*`; the CLI entry is `python -m twomarkdown.cli`.
+- **Settings in code, secrets in `.env`, OCR mode in `.ocr-mode`** — flags and tuning are Pydantic `BaseModel` defaults; `Secrets` is the only `BaseSettings` class.
 
 ## Where the details live
 
-- The code — `src/cli.py`, `src/batch/`, `src/converter/`, `src/agents/image_ocr.py`.
-- Product how-to — [README.md](../README.md) (setup, formats, `src/config.py`).
+- The code — `twomarkdown/cli.py`, `twomarkdown/batch/`, `twomarkdown/converter/`, `twomarkdown/agents/image_ocr.py`.
+- Product how-to — [README.md](../README.md) (setup, formats, `twomarkdown/config.py`).
 - Agent skills — `.agents/skills/document-code`, `.agents/skills/makefile-operations`.

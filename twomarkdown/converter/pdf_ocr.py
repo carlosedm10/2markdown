@@ -1,15 +1,33 @@
 """Scanned PDF fallback: rasterize pages and OCR with Tesseract or Ollama."""
 
+from __future__ import annotations
+
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import fitz
 from tqdm import tqdm
 
-from src.config import pdf_ocr_config
+from twomarkdown.config import pdf_ocr_config
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def open_pdf(
+    pdf_path: Path, doc: fitz.Document | None = None
+) -> Iterator[fitz.Document]:
+    """Yield an open PDF, reusing ``doc`` when the caller already holds one."""
+    if doc is not None:
+        yield doc
+        return
+    opened = fitz.open(pdf_path)
+    try:
+        yield opened
+    finally:
+        opened.close()
 
 
 def should_fallback(
@@ -17,15 +35,17 @@ def should_fallback(
     *,
     suffix: str = "",
     pdf_path: Path | None = None,
+    doc: fitz.Document | None = None,
 ) -> bool:
     if not pdf_ocr_config.pdf_ocr_enabled:
         return False
     if suffix.lower() != ".pdf":
         return False
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
-    if pdf_path is not None:
-        with fitz.open(pdf_path) as doc:
-            for page in doc:
+    if pdf_path is not None or doc is not None:
+        path = pdf_path if pdf_path is not None else Path(".")
+        with open_pdf(path, doc) as opened:
+            for page in opened:
                 if len(page.get_text().strip()) < min_chars:
                     return True
         return False
@@ -46,14 +66,17 @@ def extract_pages(
     *,
     ocr_fn: Callable[[bytes], str],
     show_progress: bool = False,
+    doc: fitz.Document | None = None,
 ) -> list[tuple[int, str]]:
     """OCR PDF pages with insufficient native text; returns (page_number, text)."""
+    from twomarkdown.converter import ocr as ocr_mod
+
     results: list[tuple[int, str]] = []
     max_pages = pdf_ocr_config.pdf_ocr_max_pages
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
 
-    with fitz.open(pdf_path) as doc:
-        page_count = doc.page_count
+    with open_pdf(pdf_path, doc) as opened:
+        page_count = opened.page_count
         limit = page_count if max_pages is None else min(page_count, max_pages)
 
         page_indices = range(limit)
@@ -66,7 +89,7 @@ def extract_pages(
             )
 
         for i in page_indices:
-            page = doc[i]
+            page = opened[i]
             if len(page.get_text().strip()) >= min_chars:
                 continue
 
@@ -78,8 +101,8 @@ def extract_pages(
                     limit,
                     pdf_path.name,
                 )
-            png_bytes = _render_page_pixmap(doc, i)
-            text = ocr_fn(png_bytes).strip()
+            png_bytes = _render_page_pixmap(opened, i)
+            text = ocr_mod.ocr_image_bytes(png_bytes, ocr_fn=ocr_fn).strip()
             if text:
                 results.append((page_num, text))
 
@@ -126,6 +149,7 @@ def compose_pdf_markdown(
     markitdown_text: str,
     ocr_pages: list[tuple[int, str]],
     tables: list[tuple[int, str]] | None = None,
+    doc: fitz.Document | None = None,
 ) -> str:
     """Build markdown in page order: native text, OCR prose, tables."""
     ocr_map = {num: text for num, text in ocr_pages}
@@ -137,8 +161,8 @@ def compose_pdf_markdown(
     parts: list[str] = []
     native_concat: list[str] = []
 
-    with fitz.open(pdf_path) as doc:
-        for index, page in enumerate(doc):
+    with open_pdf(pdf_path, doc) as opened:
+        for index, page in enumerate(opened):
             page_num = index + 1
             chunks = [f"## Page {page_num}"]
             native = _native_page_text(page, min_chars)
@@ -161,3 +185,14 @@ def compose_pdf_markdown(
             return f"{body}\n\n{extra}"
         return extra
     return body or mid or merge(mid, ocr_pages)
+
+
+def pdf_meta(source: Path, doc: fitz.Document | None = None) -> tuple[str | None, int | None]:
+    """Return (title, page_count) from PDF metadata."""
+    try:
+        with open_pdf(source, doc) as opened:
+            meta = opened.metadata or {}
+            title = (meta.get("title") or "").strip() or None
+            return title, opened.page_count
+    except Exception:
+        return None, None

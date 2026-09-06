@@ -1,9 +1,9 @@
-"""Test cases for folder discovery (src.batch.walker)."""
+"""Test cases for folder discovery (twomarkdown.batch.walker)."""
 
 from pathlib import Path
 from unittest.mock import patch
 
-from src.batch.walker import discover_files
+from twomarkdown.batch.walker import discover_files
 
 
 class TestFolderWalker:
@@ -76,7 +76,7 @@ class TestFolderWalker:
         (input_dir / "notes.txt").write_text("notes")
 
         with patch(
-            "src.batch.walker.conversion_config.convert_existing_md",
+            "twomarkdown.batch.walker.conversion_config.convert_existing_md",
             False,
         ):
             files = discover_files(input_dir, output_dir)
@@ -93,7 +93,7 @@ class TestFolderWalker:
         (input_dir / "notes.txt").write_text("notes")
 
         with patch(
-            "src.batch.walker.conversion_config.convert_existing_md",
+            "twomarkdown.batch.walker.conversion_config.convert_existing_md",
             True,
         ):
             files = discover_files(input_dir, output_dir)

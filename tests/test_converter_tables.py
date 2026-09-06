@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import fitz
 
-from src.converter.tables import extract_pdf_tables, rows_to_markdown_table
+from twomarkdown.converter.tables import extract_pdf_tables, rows_to_markdown_table
 
 
 class TestRowsToMarkdownTable:
@@ -24,7 +24,7 @@ class TestExtractPdfTables:
         path = tmp_path / "t.pdf"
         doc.save(path)
         doc.close()
-        with patch("src.converter.tables.conversion_config.extract_tables", False):
+        with patch("twomarkdown.converter.tables.conversion_config.extract_tables", False):
             assert extract_pdf_tables(path) == []
 
     def test_extract_pdf_tables_never_raises_on_plain_pdf(self, tmp_path: Path) -> None:

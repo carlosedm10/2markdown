@@ -3,7 +3,7 @@
 import zipfile
 from pathlib import Path
 
-from src.config import IWORK_BUNDLE_SUFFIXES, SKIP_DIR_NAMES, conversion_config
+from twomarkdown.config import IWORK_BUNDLE_SUFFIXES, SKIP_DIR_NAMES, conversion_config
 
 
 def _is_hidden(path: Path) -> bool:
@@ -89,7 +89,7 @@ def _effective_suffix(path: Path) -> str:
     if not conversion_config.sniff_filetype:
         return suffix
     try:
-        from src.converter.filetype import effective_suffix
+        from twomarkdown.converter.filetype import effective_suffix
 
         return effective_suffix(path)
     except Exception:

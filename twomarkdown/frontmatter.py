@@ -6,10 +6,9 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-import fitz
-
-from src.config import conversion_config
-from src.language import guess_language
+from twomarkdown.config import conversion_config
+from twomarkdown.converter.pdf_ocr import pdf_meta
+from twomarkdown.language import guess_language
 
 _HEADING = re.compile(r"^#\s+(.+)$", re.MULTILINE)
 _TABLE_HEADING = re.compile(r"^### Table \(page \d+\)", re.MULTILINE)
@@ -52,13 +51,7 @@ def _title_from_markdown(markdown: str) -> str | None:
 def _pdf_meta(source: Path) -> tuple[str | None, int | None]:
     if source.suffix.lower() != ".pdf":
         return None, None
-    try:
-        with fitz.open(source) as doc:
-            meta = doc.metadata or {}
-            title = (meta.get("title") or "").strip() or None
-            return title, doc.page_count
-    except Exception:
-        return None, None
+    return pdf_meta(source)
 
 
 def build_frontmatter(

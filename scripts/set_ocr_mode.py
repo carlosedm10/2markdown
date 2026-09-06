@@ -1,67 +1,97 @@
 #!/usr/bin/env python3
-"""Update OCR mode in src/config.py. Stdlib only — runs on the host before Docker."""
+"""Persist OCR mode in .ocr-mode (stdlib only — runs on the host before Docker)."""
 
 from __future__ import annotations
 
-import re
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG_PATH = ROOT / "src" / "config.py"
-
-_BACKEND_RE = re.compile(
-    r'^OCR_BACKEND: Literal\["tesseract", "ollama"\] = "(tesseract|ollama)"\s*$',
-    re.MULTILINE,
-)
-_LLM_RE = re.compile(r"^LLM_ENABLED = (True|False)\s*$", re.MULTILINE)
-_VISION_RE = re.compile(r'^OLLAMA_VISION_MODEL = "([^"]+)"\s*$', re.MULTILINE)
+OCR_MODE_PATH = ROOT / ".ocr-mode"
 
 
-def apply_mode(text: str, mode: str, vision_model: str | None = None) -> str:
+def _normalize_vision_model(vision_model: str | None) -> str | None:
+    if not vision_model:
+        return None
+    if vision_model.startswith("ollama:"):
+        return vision_model
+    return f"ollama:{vision_model}"
+
+
+def load_mode(path: Path | None = None) -> dict[str, Any]:
+    target = path or OCR_MODE_PATH
+    if not target.is_file():
+        return {
+            "backend": "tesseract",
+            "llm_enabled": False,
+            "vision_model": "ollama:moondream",
+        }
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "backend": "tesseract",
+            "llm_enabled": False,
+            "vision_model": "ollama:moondream",
+        }
+    backend = data.get("backend") or "tesseract"
+    if backend not in {"tesseract", "ollama"}:
+        backend = "tesseract"
+    vision = data.get("vision_model") or "ollama:moondream"
+    llm = bool(data.get("llm_enabled")) if "llm_enabled" in data else backend == "ollama"
+    return {"backend": backend, "llm_enabled": llm, "vision_model": vision}
+
+
+def apply_mode(
+    current: dict[str, Any],
+    mode: str,
+    vision_model: str | None = None,
+) -> dict[str, Any]:
     backend = "ollama" if mode == "ollama" else "tesseract"
-    llm = "True" if mode == "ollama" else "False"
-    text, n_backend = _BACKEND_RE.subn(
-        f'OCR_BACKEND: Literal["tesseract", "ollama"] = "{backend}"',
-        text,
-        count=1,
-    )
-    text, n_llm = _LLM_RE.subn(f"LLM_ENABLED = {llm}", text, count=1)
-    if n_backend != 1 or n_llm != 1:
-        raise SystemExit(
-            f"Could not find OCR_BACKEND / LLM_ENABLED assignments in {CONFIG_PATH}"
-        )
-    if mode == "ollama" and vision_model:
-        model = vision_model if vision_model.startswith("ollama:") else f"ollama:{vision_model}"
-        text, n_vision = _VISION_RE.subn(
-            f'OLLAMA_VISION_MODEL = "{model}"',
-            text,
-            count=1,
-        )
-        if n_vision != 1:
-            raise SystemExit(f"Could not find OLLAMA_VISION_MODEL in {CONFIG_PATH}")
-    return text
+    updated = dict(current)
+    updated["backend"] = backend
+    updated["llm_enabled"] = backend == "ollama"
+    if mode == "ollama":
+        model = _normalize_vision_model(vision_model)
+        if model:
+            updated["vision_model"] = model
+        else:
+            updated.setdefault("vision_model", "ollama:moondream")
+    return updated
 
 
-def llm_enabled(text: str) -> bool:
-    match = _LLM_RE.search(text)
-    if not match:
-        raise SystemExit(f"Could not find LLM_ENABLED in {CONFIG_PATH}")
-    return match.group(1) == "True"
+def llm_enabled(data: dict[str, Any] | str) -> bool:
+    if isinstance(data, str):
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            return False
+        return bool(parsed.get("llm_enabled")) or parsed.get("backend") == "ollama"
+    return bool(data.get("llm_enabled")) or data.get("backend") == "ollama"
+
+
+def write_mode(data: dict[str, Any], path: Path | None = None) -> None:
+    target = path or OCR_MODE_PATH
+    target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] not in {"tesseract", "ollama", "is-llm"}:
-        raise SystemExit(f"Usage: {sys.argv[0]} tesseract|ollama [VISION_MODEL] | is-llm")
+        raise SystemExit(
+            f"Usage: {sys.argv[0]} tesseract|ollama [VISION_MODEL] | is-llm"
+        )
 
-    text = CONFIG_PATH.read_text(encoding="utf-8")
     command = sys.argv[1]
+    current = load_mode()
     if command == "is-llm":
-        raise SystemExit(0 if llm_enabled(text) else 1)
+        raise SystemExit(0 if llm_enabled(current) else 1)
 
     vision_model = sys.argv[2] if len(sys.argv) > 2 else None
-    CONFIG_PATH.write_text(apply_mode(text, command, vision_model), encoding="utf-8")
-    print(f"OCR mode set to {command} in {CONFIG_PATH}")
+    updated = apply_mode(current, command, vision_model)
+    write_mode(updated)
+    print(f"OCR mode set to {command} in {OCR_MODE_PATH}")
 
 
 if __name__ == "__main__":
