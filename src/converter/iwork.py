@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from src.config import IWORK_BUNDLE_SUFFIXES, iwork_config
+from src.config import IWORK_BUNDLE_SUFFIXES, iwork_config, pdf_ocr_config
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +270,7 @@ def _convert_pages(
                 from src.converter import markitdown_converter
 
                 text = markitdown_converter.convert_file(preview).strip()
-            if text:
+            if text and len(text) >= pdf_ocr_config.pdf_ocr_min_chars:
                 return text
     finally:
         if temp_dir is not None:
@@ -290,6 +290,10 @@ def _convert_pages(
     )
 
 
+def _escape_applescript_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _try_macos_app_export(path: Path) -> str:
     """Optional macOS export via Pages.app (off by default)."""
     import subprocess
@@ -305,10 +309,12 @@ def _try_macos_app_export(path: Path) -> str:
 
     with tempfile.TemporaryDirectory() as tmp:
         out_path = Path(tmp) / f"export{'.pdf' if 'PDF' in export_format else '.xlsx'}"
+        posix_path = _escape_applescript_string(path.as_posix())
+        export_path = _escape_applescript_string(out_path.as_posix())
         script = f'''
         tell application "{app_name}"
-            set docRef to open POSIX file "{path}"
-            export docRef to POSIX file "{out_path}" as {export_format}
+            set docRef to open POSIX file "{posix_path}"
+            export docRef to POSIX file "{export_path}" as {export_format}
             close docRef saving no
         end tell
         '''

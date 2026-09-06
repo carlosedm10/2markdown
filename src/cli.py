@@ -17,6 +17,20 @@ app = typer.Typer(
 )
 
 
+def resolve_ocr_backend(
+    *,
+    ollama: bool,
+    ocr_backend: Literal["tesseract", "ollama"],
+    llm_enabled: bool,
+) -> tuple[Literal["tesseract", "ollama"], bool]:
+    """Return (backend, llm_enabled). ollama flag or backend=ollama implies LLM."""
+    if ollama:
+        return "ollama", True
+    if ocr_backend == "ollama":
+        return "ollama", True
+    return ocr_backend, llm_enabled
+
+
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -72,7 +86,10 @@ def convert(
     llm_enabled: bool = typer.Option(
         False,
         "--llm-enabled",
-        help="Use Ollama vision for OCR (requires ocr-backend=ollama)",
+        help=(
+            "Enable Ollama vision for OCR (optional alias; not required when "
+            "--ocr-backend=ollama)"
+        ),
     ),
     pdf_ocr: bool = typer.Option(
         True,
@@ -106,21 +123,16 @@ def convert(
     conversion_config.output_dir = resolved_output
     conversion_config.ocr_enabled = ocr
     conversion_config.skip_existing = skip_existing
-    if ollama:
-        ocr_backend = "ollama"
-        llm_enabled = True
+    ocr_backend, llm_enabled = resolve_ocr_backend(
+        ollama=ollama,
+        ocr_backend=ocr_backend,
+        llm_enabled=llm_enabled,
+    )
 
     conversion_config.ocr_backend = ocr_backend
     conversion_config.fetch_remote_images = fetch_remote_images
     llm_config.llm_enabled = llm_enabled
     pdf_ocr_config.pdf_ocr_enabled = pdf_ocr
-
-    if ocr_backend == "ollama" and not llm_enabled:
-        typer.echo(
-            "Warning: --ocr-backend=ollama without --llm-enabled; "
-            "falling back to tesseract for OCR.",
-            err=True,
-        )
 
     typer.echo(f"Input:  {input.resolve()}")
     typer.echo(f"Output: {resolved_output}")

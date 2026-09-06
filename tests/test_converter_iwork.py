@@ -29,22 +29,48 @@ class TestIWorkConverter:
         bundle.mkdir()
         assert iwork.is_iwork_bundle(bundle) is True
 
+    def test_escape_applescript_string_escapes_quotes_and_backslashes(self) -> None:
+        """_escape_applescript_string() — escapes backslashes and double quotes."""
+        assert iwork._escape_applescript_string('a\\b"c') == 'a\\\\b\\"c'
+
     def test_convert_bundle_pages_uses_preview_pdf(self, tmp_path: Path) -> None:
-        """convert_bundle() — Pages uses preview.pdf via convert_pdf callback."""
+        """convert_bundle() — Pages uses preview.pdf when text meets min_chars."""
         bundle = tmp_path / "doc.pages"
         bundle.mkdir()
+        (bundle / "preview.pdf").write_bytes(b"%PDF-1.4\n")
+        long_preview_text = "x" * 50
+
+        with patch(
+            "src.converter.iwork._extract_iwa_text_from_bundle",
+            return_value="IWA body text",
+        ):
+            markdown = iwork.convert_bundle(
+                bundle,
+                convert_pdf=lambda p: long_preview_text,
+            )
+
+        assert markdown == long_preview_text
+
+    def test_convert_bundle_pages_falls_through_short_preview_to_iwa(
+        self, tmp_path: Path
+    ) -> None:
+        """convert_bundle() — short preview.pdf text falls through to IWA extraction."""
+        bundle = tmp_path / "doc.pages"
+        bundle.mkdir()
+        (bundle / "Metadata").mkdir()
         (bundle / "preview.pdf").write_bytes(b"%PDF-1.4\n")
 
         with patch(
             "src.converter.iwork._extract_iwa_text_from_bundle",
-            return_value="",
-        ):
+            return_value="IWA body text",
+        ) as mock_iwa:
             markdown = iwork.convert_bundle(
                 bundle,
-                convert_pdf=lambda p: f"from-pdf:{p.name}",
+                convert_pdf=lambda p: "hi",
             )
 
-        assert markdown == "from-pdf:preview.pdf"
+        assert markdown == "IWA body text"
+        mock_iwa.assert_called_once_with(bundle)
 
     def test_convert_bundle_pages_raises_when_no_content(self, tmp_path: Path) -> None:
         """convert_bundle() — Pages without preview or IWA text raises."""

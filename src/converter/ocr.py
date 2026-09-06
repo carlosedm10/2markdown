@@ -19,6 +19,15 @@ RASTER_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 
 IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
+REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+
+
+def markdown_has_usable_text(markdown: str) -> bool:
+    if not (markdown or "").strip():
+        return False
+    leftover = IMAGE_PATTERN.sub("", markdown)
+    return bool(leftover.strip())
+
 
 def is_raster_image(path: Path) -> bool:
     return path.suffix.lower() in RASTER_IMAGE_SUFFIXES
@@ -37,9 +46,10 @@ def extract_text_with_tesseract(image_bytes: bytes) -> str:
                 img = img.convert("RGB")
 
             grayscale = ImageOps.grayscale(img)
-            text = pytesseract.image_to_string(grayscale).strip()
+            lang = conversion_config.tesseract_lang
+            text = pytesseract.image_to_string(grayscale, lang=lang).strip()
             if not text:
-                text = pytesseract.image_to_string(img).strip()
+                text = pytesseract.image_to_string(img, lang=lang).strip()
             return text
     except Exception as exc:
         logger.warning("Tesseract error: %s", exc)
@@ -65,12 +75,30 @@ def _fetch_remote_image(url: str) -> bytes | None:
     try:
         if url.startswith("//"):
             url = "https:" + url
-        resp = requests.get(url, timeout=20)
+        if not url.startswith(("http://", "https://")):
+            return None
+        resp = requests.get(url, timeout=20, stream=True)
         resp.raise_for_status()
         content_type = (resp.headers.get("Content-Type") or "").lower()
         if not content_type.startswith("image/"):
             return None
-        return resp.content
+        content_length = resp.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                if int(content_length) > REMOTE_IMAGE_MAX_BYTES:
+                    return None
+            except ValueError:
+                pass
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=8192):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > REMOTE_IMAGE_MAX_BYTES:
+                return None
+            chunks.append(chunk)
+        return b"".join(chunks)
     except Exception as exc:
         logger.warning("Failed to fetch image %s: %s", url, exc)
         return None
@@ -97,8 +125,7 @@ def convert_image_file(
     existing_markdown: str = "",
 ) -> str:
     """OCR a standalone image when MarkItDown yields little or no text."""
-    text = (existing_markdown or "").strip()
-    if text:
+    if markdown_has_usable_text(existing_markdown):
         return existing_markdown
     if not conversion_config.ocr_enabled:
         return existing_markdown

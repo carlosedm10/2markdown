@@ -1,8 +1,32 @@
 """Test cases for markdown image OCR (src.converter.ocr)."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from src.converter.ocr import convert_image_file, enrich_markdown_images, is_raster_image
+from src.converter.ocr import (
+    REMOTE_IMAGE_MAX_BYTES,
+    _fetch_remote_image,
+    convert_image_file,
+    enrich_markdown_images,
+    is_raster_image,
+    markdown_has_usable_text,
+)
+
+
+class TestMarkdownHasUsableText:
+    """Test cases for markdown_has_usable_text()."""
+
+    def test_markdown_has_usable_text_false_for_empty(self) -> None:
+        assert not markdown_has_usable_text("")
+        assert not markdown_has_usable_text("   \n\t  ")
+
+    def test_markdown_has_usable_text_false_for_image_only(self) -> None:
+        assert not markdown_has_usable_text("![x](foto.png)")
+        assert not markdown_has_usable_text("  ![alt](path/to/img.jpg)  ")
+
+    def test_markdown_has_usable_text_true_for_body_text(self) -> None:
+        assert markdown_has_usable_text("Already converted")
+        assert markdown_has_usable_text("Intro\n\n![x](foto.png)\n\nMore text")
 
 
 class TestRasterImageDetection:
@@ -29,6 +53,22 @@ class TestStandaloneImageOcr:
             return "Slide title"
 
         result = convert_image_file(img, ocr_fn=fake_ocr, existing_markdown="")
+
+        assert "## slide.png — OCR" in result
+        assert "Slide title" in result
+
+    def test_convert_image_file_ocr_when_markitdown_is_image_embed_only(
+        self, tmp_path: Path, minimal_png_bytes: bytes
+    ) -> None:
+        img = tmp_path / "slide.png"
+        img.write_bytes(minimal_png_bytes)
+
+        def fake_ocr(_: bytes) -> str:
+            return "Slide title"
+
+        result = convert_image_file(
+            img, ocr_fn=fake_ocr, existing_markdown="![x](foto.png)"
+        )
 
         assert "## slide.png — OCR" in result
         assert "Slide title" in result
@@ -90,3 +130,52 @@ class TestMarkdownImageOcr:
         enriched = enrich_markdown_images(markdown, source, ocr_fn=empty_ocr)
 
         assert enriched == markdown
+
+
+class TestFetchRemoteImage:
+    """Test cases for _fetch_remote_image()."""
+
+    def test_fetch_remote_image_returns_none_when_disabled(self) -> None:
+        with patch("src.converter.ocr.conversion_config.fetch_remote_images", False):
+            assert _fetch_remote_image("https://example.com/img.png") is None
+
+    @patch("src.converter.ocr.requests.get")
+    def test_fetch_remote_image_returns_none_when_content_length_too_large(
+        self, mock_get: MagicMock
+    ) -> None:
+        mock_resp = MagicMock()
+        mock_resp.headers = {
+            "Content-Type": "image/png",
+            "Content-Length": str(REMOTE_IMAGE_MAX_BYTES + 1),
+        }
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        with patch("src.converter.ocr.conversion_config.fetch_remote_images", True):
+            assert _fetch_remote_image("https://example.com/big.png") is None
+
+        mock_get.assert_called_once_with(
+            "https://example.com/big.png", timeout=20, stream=True
+        )
+
+    @patch("src.converter.ocr.requests.get")
+    def test_fetch_remote_image_returns_bytes_under_limit(
+        self, mock_get: MagicMock
+    ) -> None:
+        image_data = b"png-bytes"
+        mock_resp = MagicMock()
+        mock_resp.headers = {
+            "Content-Type": "image/png",
+            "Content-Length": str(len(image_data)),
+        }
+        mock_resp.iter_content.return_value = [image_data]
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        with patch("src.converter.ocr.conversion_config.fetch_remote_images", True):
+            result = _fetch_remote_image("https://example.com/img.png")
+
+        assert result == image_data
+        mock_get.assert_called_once_with(
+            "https://example.com/img.png", timeout=20, stream=True
+        )
