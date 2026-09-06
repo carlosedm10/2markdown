@@ -1,5 +1,8 @@
 """Conversion manifest for resume and failure tracking."""
 
+from __future__ import annotations
+
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -19,6 +22,26 @@ class FileRecord:
     error: str | None = None
     output: str | None = None
     ocr_backend: str | None = None
+    checksum: str | None = None
+    duration_ms: int | None = None
+    char_count: int | None = None
+
+
+def file_checksum(path: Path, *, max_bytes: int = 32_000_000) -> str | None:
+    """SHA-256 of the file (or prefix if huge)."""
+    try:
+        hasher = hashlib.sha256()
+        with path.open("rb") as handle:
+            remaining = max_bytes
+            while remaining > 0:
+                chunk = handle.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                remaining -= len(chunk)
+        return hasher.hexdigest()
+    except OSError:
+        return None
 
 
 def _file_record_from_raw(raw: dict[str, Any]) -> FileRecord:
@@ -61,6 +84,9 @@ class Manifest:
         error: str | None = None,
         output: Path | None = None,
         ocr_backend: str | None = None,
+        checksum: str | None = None,
+        duration_ms: int | None = None,
+        char_count: int | None = None,
     ) -> None:
         key = str(source.resolve())
         mtime = source.stat().st_mtime if source.exists() else None
@@ -71,6 +97,9 @@ class Manifest:
             error=error,
             output=str(output.resolve()) if output else None,
             ocr_backend=ocr_backend,
+            checksum=checksum,
+            duration_ms=duration_ms,
+            char_count=char_count,
         )
 
     def should_skip(
@@ -80,6 +109,7 @@ class Manifest:
         *,
         skip_existing: bool,
         ocr_backend: str | None = None,
+        checksum: str | None = None,
     ) -> bool:
         if not skip_existing:
             return False
@@ -94,6 +124,13 @@ class Manifest:
             and record is not None
             and record.ocr_backend is not None
             and record.ocr_backend != ocr_backend
+        ):
+            return False
+        if (
+            checksum is not None
+            and record is not None
+            and record.checksum is not None
+            and record.checksum != checksum
         ):
             return False
         try:

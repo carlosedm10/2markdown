@@ -137,7 +137,7 @@ class TestBatchProcessor:
         assert result.converted == 1
         assert expected_output.exists()
         body = expected_output.read_text(encoding="utf-8")
-        assert "source: reports/q1/doc.txt" in body
+        assert 'source: "reports/q1/doc.txt"' in body
         assert "Quarterly report" in body
 
     # -------------------------------------------------------------------------
@@ -234,3 +234,23 @@ class TestBatchProcessor:
         assert result.converted == 1
         body = (output_dir / "book.md").read_text(encoding="utf-8")
         assert "EPUB body" in body
+
+    def test_process_batch_dry_run_does_not_write_markdown(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch(dry_run=True) — lists files and writes nothing."""
+        input_dir, output_dir = batch_dirs
+        source = input_dir / "notes.txt"
+        source.write_text("hello")
+
+        result = process_batch(
+            input_dir,
+            output_dir,
+            skip_existing=False,
+            ocr_enabled=False,
+            dry_run=True,
+        )
+
+        assert result.converted == 0
+        assert str(source.resolve()) in result.planned
+        assert not (output_dir / "notes.md").exists()

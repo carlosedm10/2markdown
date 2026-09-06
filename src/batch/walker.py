@@ -84,6 +84,18 @@ def _discover_iwork_bundles(
     return sorted(bundles)
 
 
+def _effective_suffix(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if not conversion_config.sniff_filetype:
+        return suffix
+    try:
+        from src.converter.filetype import effective_suffix
+
+        return effective_suffix(path)
+    except Exception:
+        return suffix
+
+
 def discover_files(
     input_dir: Path,
     output_dir: Path,
@@ -110,11 +122,12 @@ def discover_files(
         if _inside_iwork_bundle(path):
             continue
 
-        if path.suffix.lower() not in extensions:
+        suffix = _effective_suffix(path)
+        if suffix not in extensions:
             continue
-        if path.suffix.lower() == ".md" and not conversion_config.convert_existing_md:
+        if suffix == ".md" and not conversion_config.convert_existing_md:
             continue
-        if path.suffix.lower() in IWORK_BUNDLE_SUFFIXES:
+        if suffix in IWORK_BUNDLE_SUFFIXES:
             continue
 
         files.append(path)

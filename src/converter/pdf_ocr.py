@@ -86,18 +86,78 @@ def extract_pages(
     return results
 
 
-def _format_page_sections(pages: list[tuple[int, str]]) -> str:
-    blocks: list[str] = []
-    for page_num, text in pages:
-        blocks.append(f"## Page {page_num} — OCR\n\n```\n{text}\n```")
-    return "\n\n".join(blocks)
+def _native_page_text(page: fitz.Page, min_chars: int) -> str:
+    try:
+        blocks = page.get_text("blocks")
+    except Exception:
+        blocks = None
+    if blocks:
+        ordered = sorted(blocks, key=lambda b: (round(b[1], 1), round(b[0], 1)))
+        text = "\n".join(
+            str(b[4]).strip() for b in ordered if len(b) > 4 and str(b[4]).strip()
+        )
+        if len(text.strip()) >= min_chars:
+            return text.strip()
+    text = page.get_text().strip()
+    if len(text) >= min_chars:
+        return text
+    return ""
+
+
+def _format_ocr_prose(page_num: int, text: str) -> str:
+    return f"## Page {page_num}\n\n### OCR\n\n{text.strip()}"
 
 
 def merge(markdown: str, pages: list[tuple[int, str]]) -> str:
+    """Append OCR pages as prose (no code fences), in page order."""
     if not pages:
-        return markdown
-    ocr_section = _format_page_sections(pages)
+        return markdown or ""
+    sections = [_format_ocr_prose(num, text) for num, text in pages]
+    ocr_body = "\n\n".join(sections)
     base = (markdown or "").strip()
     if base:
-        return f"{base}\n\n## Scanned pages (OCR fallback)\n\n{ocr_section}"
-    return ocr_section
+        return f"{base}\n\n{ocr_body}"
+    return ocr_body
+
+
+def compose_pdf_markdown(
+    *,
+    pdf_path: Path,
+    markitdown_text: str,
+    ocr_pages: list[tuple[int, str]],
+    tables: list[tuple[int, str]] | None = None,
+) -> str:
+    """Build markdown in page order: native text, OCR prose, tables."""
+    ocr_map = {num: text for num, text in ocr_pages}
+    table_map: dict[int, list[str]] = {}
+    for num, block in tables or []:
+        table_map.setdefault(num, []).append(block)
+
+    min_chars = pdf_ocr_config.pdf_ocr_min_chars
+    parts: list[str] = []
+    native_concat: list[str] = []
+
+    with fitz.open(pdf_path) as doc:
+        for index, page in enumerate(doc):
+            page_num = index + 1
+            chunks = [f"## Page {page_num}"]
+            native = _native_page_text(page, min_chars)
+            if native:
+                chunks.append(native)
+                native_concat.append(native)
+            if page_num in ocr_map:
+                chunks.append("### OCR")
+                chunks.append(ocr_map[page_num].strip())
+            for table_md in table_map.get(page_num, []):
+                chunks.append(table_md)
+            parts.append("\n\n".join(chunks))
+
+    body = "\n\n".join(parts).strip()
+    mid = (markitdown_text or "").strip()
+    native_joined = "\n\n".join(native_concat).strip()
+    if mid and len(mid) > max(len(native_joined) * 1.2, 80) and mid not in body:
+        extra = f"## Document (MarkItDown)\n\n{mid}"
+        if body:
+            return f"{body}\n\n{extra}"
+        return extra
+    return body or mid or merge(mid, ocr_pages)

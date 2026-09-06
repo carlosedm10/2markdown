@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
 import tempfile
 import zipfile
 from collections.abc import Callable
@@ -14,6 +13,10 @@ from typing import Any
 from src.config import IWORK_BUNDLE_SUFFIXES, iwork_config, pdf_ocr_config
 
 logger = logging.getLogger(__name__)
+
+_BUNDLE_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+_BUNDLE_IMAGE_GLOBS = ("*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif")
+_app_export_warned = False
 
 
 class IWorkConversionError(Exception):
@@ -29,6 +32,70 @@ def is_iwork_bundle(path: Path) -> bool:
     return path.is_dir() or path.is_file()
 
 
+def _warn_app_export_once() -> None:
+    global _app_export_warned
+    if iwork_config.iwork_use_app_export and not _app_export_warned:
+        logger.warning("IWORK_USE_APP_EXPORT is not supported in Docker; ignoring")
+        _app_export_warned = True
+
+
+def _iter_bundle_images(path: Path) -> list[Path]:
+    """Return raster image paths under an iWork bundle ``Data/`` directory."""
+    path = path.resolve()
+    if path.is_dir():
+        data_dir = path / "Data"
+        if not data_dir.is_dir():
+            return []
+        images: list[Path] = []
+        for pattern in _BUNDLE_IMAGE_GLOBS:
+            images.extend(data_dir.rglob(pattern))
+        return sorted(images)
+
+    if not path.is_file():
+        return []
+
+    # Directory bundles are the primary supported path; zip members are skipped.
+    try:
+        with zipfile.ZipFile(path) as zf:
+            has_images = any(
+                name.startswith("Data/")
+                and not name.endswith("/")
+                and Path(name).suffix.lower() in _BUNDLE_IMAGE_SUFFIXES
+                for name in zf.namelist()
+            )
+            if has_images:
+                logger.debug("Skipping zip bundle image extraction for %s", path)
+    except (zipfile.BadZipFile, OSError) as exc:
+        logger.debug("Skipping zip bundle images for %s: %s", path, exc)
+    return []
+
+
+def embed_images_markdown(
+    path: Path,
+    ocr_fn: Callable[[bytes], str] | None = None,
+) -> str:
+    """Markdown section listing embedded bundle images, optionally with OCR text."""
+    images = _iter_bundle_images(path)
+    if not images:
+        return ""
+
+    parts = ["## Embedded images", ""]
+    for image_path in images:
+        parts.append(f"- {image_path.name}")
+        if ocr_fn is not None:
+            try:
+                ocr_text = ocr_fn(image_path.read_bytes()).strip()
+            except Exception as exc:
+                logger.warning("OCR failed for iWork image %s: %s", image_path, exc)
+                ocr_text = ""
+            if ocr_text:
+                parts.append("")
+                parts.append(f"### [OCR] {ocr_text}")
+        parts.append("")
+
+    return "\n".join(parts).strip()
+
+
 def convert_bundle(
     path: Path,
     *,
@@ -36,6 +103,7 @@ def convert_bundle(
 ) -> str:
     """Convert an iWork bundle to markdown text."""
     path = path.resolve()
+    _warn_app_export_once()
     if iwork_config.iwork_backend == "kreuzberg":
         return _convert_with_kreuzberg(path)
 
@@ -275,11 +343,6 @@ def _convert_pages(
     finally:
         if temp_dir is not None:
             temp_dir.cleanup()
-
-    if iwork_config.iwork_use_app_export and sys.platform == "darwin":
-        exported = _try_macos_app_export(path)
-        if exported:
-            return exported
 
     iwa_text = _extract_iwa_text_from_bundle(path)
     if iwa_text:

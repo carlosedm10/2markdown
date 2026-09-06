@@ -112,6 +112,36 @@ def convert(
         "--progress/--no-progress",
         help="Show progress bar (default: on in TTY, off with --verbose)",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="List files that would be converted without writing output",
+    ),
+    workers: int | None = typer.Option(
+        None,
+        "--workers",
+        help="Parallel file conversions (default: PARALLEL_WORKERS)",
+    ),
+    emit_chunks: bool = typer.Option(
+        False,
+        "--emit-chunks/--no-emit-chunks",
+        help="Write a .chunks.json sidecar next to each markdown file",
+    ),
+    clean: bool = typer.Option(
+        True,
+        "--clean/--no-clean",
+        help="Deterministic markdown cleanup (quotes, hyphenation, headers)",
+    ),
+    tables: bool = typer.Option(
+        True,
+        "--tables/--no-tables",
+        help="Extract PDF/Excel tables as GitHub-flavored markdown",
+    ),
+    describe_figures: bool = typer.Option(
+        True,
+        "--describe-figures/--no-describe-figures",
+        help="Describe images with little OCR text when vision LLM is enabled",
+    ),
 ) -> None:
     """Convert all supported files under INPUT to markdown under OUTPUT."""
     _configure_logging(verbose)
@@ -131,11 +161,34 @@ def convert(
 
     conversion_config.ocr_backend = ocr_backend
     conversion_config.fetch_remote_images = fetch_remote_images
+    conversion_config.clean_markdown = clean
+    conversion_config.extract_tables = tables
+    conversion_config.describe_figures = describe_figures
+    conversion_config.emit_chunks = emit_chunks
+    if workers is not None:
+        conversion_config.parallel_workers = max(1, workers)
     llm_config.llm_enabled = llm_enabled
     pdf_ocr_config.pdf_ocr_enabled = pdf_ocr
 
     typer.echo(f"Input:  {input.resolve()}")
     typer.echo(f"Output: {resolved_output}")
+
+    if dry_run:
+        resolved_output.mkdir(parents=True, exist_ok=True)
+        result = process_batch(
+            batch_root,
+            resolved_output,
+            only_files=only_files,
+            skip_existing=skip_existing,
+            ocr_enabled=ocr,
+            verbose=verbose,
+            show_progress=progress,
+            dry_run=True,
+        )
+        typer.echo(f"Dry run: {len(result.planned)} file(s)")
+        for path in result.planned:
+            typer.echo(f"  {path}")
+        raise typer.Exit(code=0)
 
     resolved_output.mkdir(parents=True, exist_ok=True)
 
