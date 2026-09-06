@@ -5,19 +5,29 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+from src.converter.ereader import EREADER_SUFFIXES
 from src.converter.filetype import sniff_suffix
 
 _OFFICE_ZIP_SUFFIXES = frozenset({".docx", ".xlsx", ".pptx"})
 _IWORK_ZIP_SUFFIXES = frozenset({".pages", ".key", ".numbers"})
+_NEVER_EXPLODE_SUFFIXES = (
+    _OFFICE_ZIP_SUFFIXES | _IWORK_ZIP_SUFFIXES | EREADER_SUFFIXES
+)
 
 
 def is_explodable_zip(path: Path) -> bool:
-    """Return True for plain .zip archives that are not Office or iWork bundles."""
-    if path.suffix.lower() != ".zip" and sniff_suffix(path) != ".zip":
+    """Return True for plain .zip archives that are not Office, iWork, or e-readers."""
+    suffix = path.suffix.lower()
+    if suffix in _NEVER_EXPLODE_SUFFIXES:
+        return False
+    if suffix != ".zip":
         return False
 
-    effective = sniff_suffix(path)
-    if effective in _OFFICE_ZIP_SUFFIXES | _IWORK_ZIP_SUFFIXES:
+    try:
+        effective = sniff_suffix(path)
+    except OSError:
+        return False
+    if effective in _NEVER_EXPLODE_SUFFIXES:
         return False
 
     try:
@@ -26,7 +36,7 @@ def is_explodable_zip(path: Path) -> bool:
     except (OSError, zipfile.BadZipFile):
         return False
 
-    return effective == ".zip"
+    return True
 
 
 def _safe_extract_path(name: str, dest_dir: Path) -> Path:

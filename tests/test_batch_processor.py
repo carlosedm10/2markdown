@@ -1,5 +1,6 @@
 """Test cases for batch conversion (src.batch.processor)."""
 
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -79,6 +80,62 @@ class TestBatchProcessor:
         body = (output_dir / "diagram.md").read_text(encoding="utf-8")
         assert "Diagram text" in body
 
+    def test_process_batch_ocrs_png_bytes_named_as_pdf(
+        self, batch_dirs: tuple[Path, Path], minimal_png_bytes: bytes
+    ) -> None:
+        """process_batch() — PNG magic wins over a .pdf extension."""
+        input_dir, output_dir = batch_dirs
+        source = input_dir / "Foto.pdf"
+        source.write_bytes(minimal_png_bytes)
+
+        with patch(
+            "src.converter.markitdown_converter.convert_file",
+            return_value="",
+        ):
+            with patch(
+                "src.converter.ocr.ocr_image_bytes",
+                return_value="Handwritten tree",
+            ):
+                result = process_batch(
+                    input_dir,
+                    output_dir,
+                    skip_existing=False,
+                    ocr_enabled=True,
+                )
+
+        assert result.converted == 1
+        assert result.failed == 0
+        body = (output_dir / "Foto.md").read_text(encoding="utf-8")
+        assert "Handwritten tree" in body
+
+    def test_process_batch_writes_placeholder_when_image_has_no_text(
+        self, batch_dirs: tuple[Path, Path], minimal_png_bytes: bytes
+    ) -> None:
+        """process_batch() — logos with no OCR text still write markdown."""
+        input_dir, output_dir = batch_dirs
+        source = input_dir / "Logo.png"
+        source.write_bytes(minimal_png_bytes)
+
+        with patch(
+            "src.converter.markitdown_converter.convert_file",
+            return_value="",
+        ):
+            with patch(
+                "src.converter.ocr.ocr_image_bytes",
+                return_value="",
+            ):
+                result = process_batch(
+                    input_dir,
+                    output_dir,
+                    skip_existing=False,
+                    ocr_enabled=True,
+                )
+
+        assert result.converted == 1
+        assert result.failed == 0
+        body = (output_dir / "Logo.md").read_text(encoding="utf-8")
+        assert "No text extracted" in body
+
     def test_process_batch_records_failed_status_in_manifest(
         self, batch_dirs: tuple[Path, Path]
     ) -> None:
@@ -139,6 +196,62 @@ class TestBatchProcessor:
         body = expected_output.read_text(encoding="utf-8")
         assert 'source: "reports/q1/doc.txt"' in body
         assert "Quarterly report" in body
+
+    def test_process_batch_explodes_zip_as_output_folder(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — zip members convert as if the zip were a folder."""
+        input_dir, output_dir = batch_dirs
+        nested = input_dir / "folder"
+        nested.mkdir()
+        zip_path = nested / "Recurso de Alzada.zip"
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("Alzada.txt", b"appeal body")
+            archive.writestr(".hidden.txt", b"skip me")
+            archive.writestr("ignore.bin", b"\x00")
+
+        with patch(
+            "src.converter.markitdown_converter.convert_file",
+            return_value="appeal body",
+        ):
+            result = process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+            )
+
+        expected_output = output_dir / "folder" / "Recurso de Alzada" / "Alzada.md"
+        assert result.converted == 1
+        assert result.failed == 0
+        assert expected_output.exists()
+        body = expected_output.read_text(encoding="utf-8")
+        assert 'source: "folder/Recurso de Alzada/Alzada.txt"' in body
+        assert "appeal body" in body
+        assert not (output_dir / "folder" / "Recurso de Alzada" / "ignore.md").exists()
+
+    def test_process_batch_converts_utf8_json_without_ascii_codec(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — JSON with non-ASCII bytes converts as UTF-8."""
+        input_dir, output_dir = batch_dirs
+        source = input_dir / "content.json"
+        source.write_bytes(b'{"titulo": "Alzada \xc2\xba"}')
+
+        result = process_batch(
+            input_dir,
+            output_dir,
+            skip_existing=False,
+            ocr_enabled=False,
+        )
+
+        expected = output_dir / "content.md"
+        assert result.converted == 1
+        assert result.failed == 0
+        assert expected.exists()
+        body = expected.read_text(encoding="utf-8")
+        assert "Alzada º" in body
+        assert "```json" in body
 
     # -------------------------------------------------------------------------
     # Skip existing

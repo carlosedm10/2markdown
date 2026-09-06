@@ -57,9 +57,10 @@ When `llm_enabled` is true in `src/config.py` (`make build ollama`), `make proce
 | `/docs/reports/` (folder) | `/docs/reports_2markdown/` — mirrors the folder tree |
 | `/docs/report.pdf` (file) | `/docs/report_2markdown/report.md` |
 
-4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file (including OCR backend).
+4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file (including OCR backend). Open `<output>/2markdown-report.html` (or the PDF) for success rate, reliability, tools used, and timings.
 5. Skip logic respects OCR backend: failed files are retried; switching Tesseract → Ollama re-converts. Pass `--force` to the CLI, or set `skip_existing = False` in `src/config.py`, to re-convert everything.
 6. `.md` source files are not reconverted unless `convert_existing_md = True` in `src/config.py`.
+7. `make process` also writes span dumps under `telemetry/` in this repo (gitignored) so you can compare bottlenecks across runs. `--no-report` skips the HTML/PDF.
 
 ### Examples
 
@@ -85,7 +86,7 @@ MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, 
 | `.mobi`, `.azw`, `.azw3` | Unpacked HTML → markdown chapters |
 | `.eml` | Native RFC 822 (From/To/Subject + body) |
 | `.xlsx` | Native sheets as `## Sheet:` + GFM tables |
-| `.doc`, `.ppt` | LibreOffice/`soffice` if on PATH (not in the default image) |
+| `.doc`, `.ppt` | LibreOffice in the image (`soffice --headless`) |
 
 Plain `.zip` archives are unpacked into the output tree and converted (Office/iWork zips are left intact). File type can be sniffed from magic bytes (`sniff_filetype` in `src/config.py`).
 
@@ -95,7 +96,7 @@ Plain `.zip` archives are unpacked into the output tree and converted (Office/iW
 |--------|-----------------|-------|
 | `.numbers` | [numbers-parser](https://pypi.org/project/numbers-parser/) | Tables → markdown |
 | `.key` | [keynote-parser](https://pypi.org/project/keynote-parser/) | Slide text from IWA archives |
-| `.pages` | `preview.pdf` when present, else IWA text | Weaker than export; see below |
+| `.pages` | `preview.pdf` when present, else IWA text, else OCR of `preview.jpg` | Weaker than export; see below |
 
 Embedded files inside a bundle (e.g. `MyDoc.pages/Data/*.png`) are **not** separate batch items. Raster images under `Data/` are listed in the bundle markdown and OCR'd when OCR is on.
 
@@ -105,11 +106,11 @@ Kreuzberg is an optional extra (`iwork-kreuzberg`) and is **not** in the default
 
 Set `iwork_backend = "kreuzberg"` in `src/config.py`.
 
-`.doc`/`.ppt` convert via LibreOffice when `soffice` is on PATH; otherwise that file fails and the batch continues. Video files still soft-fail.
+`.doc`/`.ppt` convert via LibreOffice in the Docker image. Video files still soft-fail.
 
 ### iWork limitations
 
-- Floating text boxes in Pages may be missing without `preview.pdf` or Kreuzberg
+- Floating text boxes in Pages may be missing without `preview.pdf`, `preview.jpg` OCR, or Kreuzberg
 - Videos inside `Data/` are not transcribed
 - Very new Keynote versions may need an updated `keynote-parser`
 
@@ -163,6 +164,7 @@ Credentials belong in `.env` and are loaded by `Secrets` in `src/config.py` (emp
 | `process INPUT=...` | Convert (mounts input + output only; `VERBOSE=1`, `DRY_RUN=1`, `WORKERS=n`) |
 | `stop-ollama` | Stop host Ollama |
 | `test` | Unit tests (`TEST=` for one path) |
+| `bench` | Compare conversion methods (serial vs parallel) |
 
 ## Development
 
@@ -178,6 +180,7 @@ Maintainer targets all run **inside Docker**. Do not run `uv add` / `uv lock` on
 | `make lint` / `make lint-fix` / `make format` | Ruff check, auto-fix, format |
 | `make test` / `make test TEST=path` | Unit tests |
 | `make test-integration` | Integration tests |
+| `make bench` | Replay the same files with different methods |
 | `make logs` / `make backend-shell` | Backend logs and shell |
 
 GitHub Actions calls `make lint` and `make test` (`CI=true` → native `uv`). Optional `make test-integration` is non-blocking.

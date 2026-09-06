@@ -33,7 +33,10 @@ def convert_file(path: Path) -> str:
     is raised by the batch processor for empty results, not by this function.
     Other errors propagate to the batch processor for soft-fail handling.
     """
+    from src.telemetry import span
+
     converter = get_converter()
-    result = converter.convert_local(str(path.resolve()))
+    with span("markitdown"):
+        result = converter.convert_local(str(path.resolve()))
     text = (result.text_content or "").strip()
     return text

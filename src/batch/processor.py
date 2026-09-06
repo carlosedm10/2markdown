@@ -16,10 +16,19 @@ from tqdm import tqdm
 from src.batch.manifest import Manifest, file_checksum
 from src.batch.ocr_cache import OcrCache
 from src.batch.walker import discover_files
-from src.config import conversion_config, iwork_config
+from src.config import SKIP_DIR_NAMES, conversion_config, iwork_config
 from src.converter import ereader, iwork, markitdown_converter, ocr, pdf_ocr
 from src.converter.markitdown_converter import ConversionError
 from src.frontmatter import build_frontmatter
+from src.telemetry import (
+    begin_batch,
+    begin_file,
+    end_batch,
+    end_file,
+    note,
+    set_converter,
+    span,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +42,52 @@ class BatchResult:
     planned: list[str] = field(default_factory=list)
 
 
+def _source_relpath(source: Path, input_dir: Path, output_dir: Path) -> Path:
+    """Path of source relative to the input tree, or to `.unzipped/` staging."""
+    source = source.resolve()
+    input_dir = input_dir.resolve()
+    output_dir = output_dir.resolve()
+    unzipped_root = (output_dir / ".unzipped").resolve()
+    for root in (input_dir, unzipped_root, output_dir):
+        try:
+            return source.relative_to(root)
+        except ValueError:
+            continue
+    return Path(source.name)
+
+
 def _mirror_output_path(source: Path, input_dir: Path, output_dir: Path) -> Path:
-    rel = source.resolve().relative_to(input_dir.resolve())
+    rel = _source_relpath(source, input_dir, output_dir)
     return output_dir / rel.with_suffix(".md")
+
+
+def _unzip_dest(zip_path: Path, input_dir: Path, output_dir: Path) -> Path:
+    unzipped_root = output_dir / ".unzipped"
+    rel = _source_relpath(zip_path, input_dir, output_dir)
+    return unzipped_root / rel.with_suffix("")
+
+
+def _filter_exploded(paths: list[Path], dest: Path) -> list[Path]:
+    dest = dest.resolve()
+    extensions = conversion_config.include_extensions
+    kept: list[Path] = []
+    for path in paths:
+        resolved = path.resolve()
+        try:
+            rel = resolved.relative_to(dest)
+        except ValueError:
+            rel = Path(path.name)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
+        if any(part in SKIP_DIR_NAMES for part in rel.parts):
+            continue
+        suffix = _effective_suffix(resolved)
+        if suffix not in extensions:
+            continue
+        if suffix == ".md" and not conversion_config.convert_existing_md:
+            continue
+        kept.append(resolved)
+    return kept
 
 
 def _get_ocr_fn() -> Callable[[bytes], str] | None:
@@ -60,6 +112,7 @@ def _cached_ocr_fn(
     def _wrapped(image_bytes: bytes) -> str:
         hit = cache.get(image_bytes)
         if hit is not None:
+            note("ocr.cache_hit")
             return hit
         text = inner(image_bytes)
         cache.put(image_bytes, text)
@@ -95,35 +148,41 @@ def _clean(markdown: str) -> str:
 def _compose_pdf(
     markdown: str, source_path: Path, *, show_progress: bool = False
 ) -> tuple[str, list[int]]:
-    ocr_fn = _get_ocr_fn() or ocr.extract_text_with_tesseract
-    ocr_pages: list[tuple[int, str]] = []
-    if pdf_ocr.should_fallback(markdown, suffix=".pdf", pdf_path=source_path):
-        if not show_progress:
-            logger.info("Scanned PDF detected, running page OCR: %s", source_path)
-        ocr_pages = pdf_ocr.extract_pages(
-            source_path, ocr_fn=ocr_fn, show_progress=show_progress
-        )
-
-    tables: list[tuple[int, str]] = []
     try:
-        from src.converter.tables import extract_pdf_tables
+        ocr_fn = _get_ocr_fn() or ocr.extract_text_with_tesseract
+        ocr_pages: list[tuple[int, str]] = []
+        if pdf_ocr.should_fallback(markdown, suffix=".pdf", pdf_path=source_path):
+            if not show_progress:
+                logger.info("Scanned PDF detected, running page OCR: %s", source_path)
+            ocr_pages = pdf_ocr.extract_pages(
+                source_path, ocr_fn=ocr_fn, show_progress=show_progress
+            )
 
-        tables = extract_pdf_tables(source_path)
+        tables: list[tuple[int, str]] = []
+        try:
+            from src.converter.tables import extract_pdf_tables
+
+            with span("pdf.tables"):
+                tables = extract_pdf_tables(source_path)
+        except Exception as exc:
+            logger.debug("PDF table extract skipped: %s", exc)
+
+        compose = getattr(pdf_ocr, "compose_pdf_markdown", None)
+        if callable(compose):
+            with span("pdf.compose"):
+                text = compose(
+                    pdf_path=source_path,
+                    markitdown_text=markdown,
+                    ocr_pages=ocr_pages,
+                    tables=tables,
+                )
+        else:
+            text = pdf_ocr.merge(markdown, ocr_pages)
+
+        return text, [n for n, _ in ocr_pages]
     except Exception as exc:
-        logger.debug("PDF table extract skipped: %s", exc)
-
-    compose = getattr(pdf_ocr, "compose_pdf_markdown", None)
-    if callable(compose):
-        text = compose(
-            pdf_path=source_path,
-            markitdown_text=markdown,
-            ocr_pages=ocr_pages,
-            tables=tables,
-        )
-    else:
-        text = pdf_ocr.merge(markdown, ocr_pages)
-
-    return text, [n for n, _ in ocr_pages]
+        logger.warning("PDF compose failed for %s: %s", source_path, exc)
+        return markdown, []
 
 
 def _convert_pdf_with_ocr(pdf_path: Path, *, show_progress: bool = False) -> str:
@@ -158,6 +217,22 @@ def _maybe_eml(path: Path) -> str | None:
         raise
 
 
+def _maybe_json(path: Path) -> str | None:
+    suffix = _effective_suffix(path)
+    if suffix != ".json":
+        return None
+    import json
+
+    raw = path.read_bytes().decode("utf-8-sig", errors="replace").strip()
+    if not raw:
+        return None
+    try:
+        pretty = json.dumps(json.loads(raw), ensure_ascii=False, indent=2)
+    except json.JSONDecodeError:
+        pretty = raw
+    return f"```json\n{pretty}\n```\n"
+
+
 def _maybe_legacy_office(path: Path) -> str | None:
     suffix = _effective_suffix(path)
     if suffix not in {".doc", ".ppt"}:
@@ -176,12 +251,24 @@ def _convert_source_to_markdown(
     suffix = _effective_suffix(source_path)
 
     if iwork_config.iwork_enabled and iwork.is_iwork_bundle(source_path):
+        set_converter("iwork")
         convert_pdf = None
-        if suffix == ".pages":
+        convert_image = None
+        if source_path.suffix.lower() == ".pages":
             convert_pdf = lambda p: _convert_pdf_with_ocr(  # noqa: E731
                 p, show_progress=show_progress
             )
-        markdown = iwork.convert_bundle(source_path, convert_pdf=convert_pdf)
+            convert_image = lambda p: ocr.convert_image_file(  # noqa: E731
+                p,
+                ocr_fn=_get_ocr_fn(),
+                existing_markdown="",
+            )
+        with span("iwork"):
+            markdown = iwork.convert_bundle(
+                source_path,
+                convert_pdf=convert_pdf,
+                convert_image=convert_image,
+            )
         embed = getattr(iwork, "embed_images_markdown", None)
         if callable(embed):
             extra = embed(source_path, ocr_fn=_get_ocr_fn())
@@ -190,35 +277,51 @@ def _convert_source_to_markdown(
         return markdown
 
     if ereader.is_ereader(source_path):
-        return ereader.convert_ereader(source_path)
+        set_converter("ereader")
+        with span("ereader"):
+            return ereader.convert_ereader(source_path)
 
     native = _maybe_eml(source_path)
     if native is not None:
+        set_converter("eml")
         return native
 
     native = _maybe_legacy_office(source_path)
     if native is not None:
+        set_converter("legacy_office")
+        return native
+
+    native = _maybe_json(source_path)
+    if native is not None:
+        set_converter("json")
         return native
 
     native = _maybe_excel(source_path)
     if native is not None:
+        set_converter("excel")
         return native
 
+    set_converter("markitdown")
     markdown = markitdown_converter.convert_file(source_path)
     if suffix == ".pdf":
+        set_converter("pdf")
         markdown, _ = _compose_pdf(markdown, source_path, show_progress=show_progress)
     elif ocr.is_raster_image(source_path):
         if not show_progress:
             logger.info("Raster image OCR: %s", source_path)
-        markdown = ocr.convert_image_file(
-            source_path,
-            ocr_fn=_get_ocr_fn(),
-            existing_markdown=markdown,
-        )
+        set_converter("image")
+        with span("image.ocr"):
+            markdown = ocr.convert_image_file(
+                source_path,
+                ocr_fn=_get_ocr_fn(),
+                existing_markdown=markdown,
+            )
     return markdown
 
 
-def _expand_zips(files: list[Path], output_dir: Path) -> list[Path]:
+def _expand_zips(
+    files: list[Path], input_dir: Path, output_dir: Path
+) -> list[Path]:
     if not conversion_config.explode_zip:
         return files
     try:
@@ -228,10 +331,16 @@ def _expand_zips(files: list[Path], output_dir: Path) -> list[Path]:
 
     expanded: list[Path] = []
     for path in files:
-        if not is_explodable_zip(path):
+        try:
+            explodable = is_explodable_zip(path)
+        except OSError as exc:
+            logger.warning("Skipping zip sniff for %s: %s", path, exc)
             expanded.append(path)
             continue
-        dest = output_dir / ".unzipped" / path.stem
+        if not explodable:
+            expanded.append(path)
+            continue
+        dest = _unzip_dest(path, input_dir, output_dir)
         dest.mkdir(parents=True, exist_ok=True)
         try:
             inner = extract_zip(path, dest)
@@ -239,9 +348,9 @@ def _expand_zips(files: list[Path], output_dir: Path) -> list[Path]:
             logger.warning("ZIP extract failed for %s: %s", path, exc)
             expanded.append(path)
             continue
-        if inner:
-            nested = discover_files(dest, output_dir)
-            expanded.extend(nested or inner)
+        members = _filter_exploded(inner, dest)
+        if members:
+            expanded.extend(members)
         else:
             expanded.append(path)
     return expanded
@@ -269,16 +378,24 @@ def _convert_one(
 ) -> tuple[str, int]:
     markdown = _convert_source_to_markdown(source_path, show_progress=show_progress)
     if not markdown or not markdown.strip():
-        raise ConversionError("empty result")
+        if ocr.is_raster_image(source_path):
+            markdown = (
+                f"## {source_path.name}\n\n"
+                "*No text extracted from this image.*\n"
+            )
+        else:
+            raise ConversionError("empty result")
 
     if conversion_config.ocr_enabled:
-        markdown = ocr.enrich_markdown_images(
-            markdown,
-            source_path,
-            ocr_fn=ocr_fn,
-        )
+        with span("ocr.enrich_images"):
+            markdown = ocr.enrich_markdown_images(
+                markdown,
+                source_path,
+                ocr_fn=ocr_fn,
+            )
 
-    markdown = _clean(markdown)
+    with span("clean"):
+        markdown = _clean(markdown)
 
     suffix = _effective_suffix(source_path)
     output_md = _mirror_output_path(source_path, input_dir, output_dir)
@@ -287,18 +404,64 @@ def _convert_one(
             from src.converter.assets import extract_pdf_images, markdown_asset_index
 
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
-            extracted = extract_pdf_images(source_path, assets_dir)
+            with span("pdf.assets"):
+                extracted = extract_pdf_images(source_path, assets_dir)
             extra = markdown_asset_index(extracted, output_root=output_md.parent)
             if extra and extra.strip():
                 markdown = f"{markdown.rstrip()}\n\n{extra.strip()}\n"
         except Exception as exc:
             logger.debug("PDF asset extract skipped: %s", exc)
 
-    content = build_frontmatter(source_path, input_dir, markdown) + markdown
+    source_rel = _source_relpath(source_path, input_dir, output_dir)
+    content = (
+        build_frontmatter(source_path, input_dir, markdown, source_rel=source_rel)
+        + markdown
+    )
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(content, encoding="utf-8")
     _write_chunks(output_md, markdown)
     return str(output_md), len(markdown)
+
+
+def _write_run_artifacts(
+    *,
+    manifest: Manifest,
+    collector,
+    wall_ms: float,
+    input_dir: Path,
+    output_dir: Path,
+    result: BatchResult,
+) -> None:
+    if not conversion_config.write_export_report:
+        return
+    import json
+
+    from src.telemetry.report import write_html, write_pdf
+    from src.telemetry.store import write_run
+    from src.telemetry.summary import build_summary, config_snapshot, traces_payload
+
+    traces = list(getattr(collector, "files", []) or [])
+    batch_spans = list(getattr(collector, "batch_spans", []) or [])
+    summary = build_summary(
+        manifest=manifest,
+        traces=traces,
+        batch_spans=batch_spans,
+        wall_ms=wall_ms,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        converted=result.converted,
+        failed=result.failed,
+        skipped=result.skipped,
+        config=config_snapshot(),
+    )
+    write_html(summary, output_dir)
+    write_pdf(summary, output_dir)
+    payload = traces_payload(traces, batch_spans)
+    (output_dir / ".2markdown-trace.json").write_text(
+        json.dumps(payload, indent=2),
+        encoding="utf-8",
+    )
+    write_run(summary, payload)
 
 
 def process_batch(
@@ -321,12 +484,15 @@ def process_batch(
     if ocr_enabled is not None:
         conversion_config.ocr_enabled = ocr_enabled
 
+    collector = begin_batch()
+    wall_started = time.perf_counter()
     try:
         if only_files is not None:
             files = sorted(path.resolve() for path in only_files)
         else:
             files = discover_files(input_dir, output_dir)
-        files = _expand_zips(files, output_dir)
+        with span("zip.explode"):
+            files = _expand_zips(files, input_dir, output_dir)
         manifest_path = output_dir / ".2markdown-manifest.json"
         manifest = Manifest(manifest_path)
         result = BatchResult()
@@ -369,6 +535,7 @@ def process_batch(
 
         def _handle(source_path: Path) -> tuple[Path, str, int | None, int, str | None]:
             started = time.perf_counter()
+            begin_file(source_path)
             try:
                 _out, chars = _convert_one(
                     source_path,
@@ -382,6 +549,8 @@ def process_batch(
             except Exception as exc:
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 return source_path, "failed", duration_ms, 0, str(exc)
+            finally:
+                end_file()
 
         def _consume(item: tuple[Path, str, int | None, int, str | None]) -> None:
             source_path, status, duration_ms, chars, error = item
@@ -475,6 +644,15 @@ def process_batch(
                         pbar.update(1)
 
         manifest.save()
+        _write_run_artifacts(
+            manifest=manifest,
+            collector=collector,
+            wall_ms=(time.perf_counter() - wall_started) * 1000.0,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            result=result,
+        )
         return result
     finally:
         conversion_config.ocr_enabled = previous_ocr_enabled
+        end_batch()

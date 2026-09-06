@@ -2,21 +2,72 @@
 
 from __future__ import annotations
 
+import errno
+import logging
+import time
 import zipfile
 from pathlib import Path
 
 from src.config import IWORK_BUNDLE_SUFFIXES, conversion_config
+
+logger = logging.getLogger(__name__)
 
 _PDF_MAGIC = b"%PDF"
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGICS = (b"\xff\xd8\xff",)
 _ZIP_MAGIC = b"PK"
 _EMAIL_HEADERS = ("From:", "Received:", "Subject:")
+_TRANSIENT_ERRNOS = {
+    errno.EAGAIN,
+    errno.EDEADLK,
+    errno.EBUSY,
+    errno.EINTR,
+}
+_READ_ATTEMPTS = 4
+
+
+def _retrying_read(path: Path, *, size: int | None) -> bytes:
+    """Read a file (prefix or all bytes); retry iCloud/network locks (EDEADLK)."""
+    last_exc: OSError | None = None
+    for attempt in range(_READ_ATTEMPTS):
+        try:
+            with path.open("rb") as handle:
+                return handle.read() if size is None else handle.read(size)
+        except OSError as exc:
+            last_exc = exc
+            if exc.errno not in _TRANSIENT_ERRNOS:
+                raise
+            time.sleep(0.05 * (2**attempt))
+    assert last_exc is not None
+    raise last_exc
 
 
 def _read_prefix(path: Path, size: int = 8192) -> bytes:
-    with path.open("rb") as handle:
-        return handle.read(size)
+    return _retrying_read(path, size=size)
+
+
+def read_file_bytes(path: Path) -> bytes:
+    """Read an entire file with the same iCloud lock retries as sniffing."""
+    return _retrying_read(path, size=None)
+
+
+def materialize_local_copy(path: Path, *, suffix: str | None = None) -> Path:
+    """Copy a source file onto local disk so zip/EPUB parsers can seek it."""
+    import tempfile
+
+    data = read_file_bytes(path)
+    handle = tempfile.NamedTemporaryFile(
+        prefix="twomarkdown-",
+        suffix=suffix if suffix is not None else path.suffix,
+        delete=False,
+    )
+    try:
+        handle.write(data)
+        handle.flush()
+    finally:
+        handle.close()
+    return Path(handle.name)
+
 
 
 def _looks_like_html(prefix: bytes) -> bool:
@@ -66,7 +117,11 @@ def sniff_suffix(path: Path) -> str | None:
     if not path.is_file():
         return path.suffix.lower() or None
 
-    prefix = _read_prefix(path)
+    try:
+        prefix = _read_prefix(path)
+    except OSError as exc:
+        logger.debug("Could not sniff %s: %s", path, exc)
+        return path.suffix.lower() or None
 
     sniffed: str | None = None
     if prefix.startswith(_PDF_MAGIC):
