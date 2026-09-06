@@ -189,7 +189,9 @@ def compose_pdf_markdown(
     return body or mid or merge(mid, ocr_pages)
 
 
-def pdf_meta(source: Path, doc: fitz.Document | None = None) -> tuple[str | None, int | None]:
+def pdf_meta(
+    source: Path, doc: fitz.Document | None = None
+) -> tuple[str | None, int | None]:
     """Return (title, page_count) from PDF metadata."""
     try:
         with open_pdf(source, doc) as opened:

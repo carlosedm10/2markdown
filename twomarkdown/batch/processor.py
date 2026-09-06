@@ -18,7 +18,12 @@ from tqdm import tqdm
 from twomarkdown.batch.manifest import Manifest, file_checksum
 from twomarkdown.batch.ocr_cache import OcrCache
 from twomarkdown.batch.walker import discover_files
-from twomarkdown.config import SKIP_DIR_NAMES, conversion_config, iwork_config, llm_config
+from twomarkdown.config import (
+    SKIP_DIR_NAMES,
+    conversion_config,
+    iwork_config,
+    llm_config,
+)
 from twomarkdown.converter import ereader, iwork, markitdown_converter, ocr, pdf_ocr
 from twomarkdown.converter.markitdown_converter import ConversionError
 from twomarkdown.frontmatter import build_frontmatter
@@ -259,7 +264,10 @@ def _maybe_json(path: Path) -> str | None:
 
 def _maybe_legacy_office(path: Path) -> str | None:
     suffix = _effective_suffix(path)
-    from twomarkdown.converter.office_legacy import LEGACY_SUFFIXES, convert_legacy_office
+    from twomarkdown.converter.office_legacy import (
+        LEGACY_SUFFIXES,
+        convert_legacy_office,
+    )
 
     if suffix not in LEGACY_SUFFIXES:
         return None
@@ -442,7 +450,10 @@ def _convert_one(
     output_md = _mirror_output_path(source_path, input_dir, output_dir)
     if suffix == ".pdf" and conversion_config.extract_assets:
         try:
-            from twomarkdown.converter.assets import extract_pdf_images, markdown_asset_index
+            from twomarkdown.converter.assets import (
+                extract_pdf_images,
+                markdown_asset_index,
+            )
 
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             with span("pdf.assets"):
@@ -492,7 +503,11 @@ def _write_run_artifacts(
 
     from twomarkdown.telemetry.report import write_html, write_pdf
     from twomarkdown.telemetry.store import write_run
-    from twomarkdown.telemetry.summary import build_summary, config_snapshot, traces_payload
+    from twomarkdown.telemetry.summary import (
+        build_summary,
+        config_snapshot,
+        traces_payload,
+    )
 
     traces = list(getattr(collector, "files", []) or [])
     batch_spans = list(getattr(collector, "batch_spans", []) or [])
@@ -704,7 +719,9 @@ def process_batch(
                     pool.submit(_handle, source_path, cancels[source_path]): source_path
                     for source_path in work
                 }
-                deadlines = {future: time.monotonic() + timeout for future in future_map}
+                deadlines = {
+                    future: time.monotonic() + timeout for future in future_map
+                }
                 pending = set(future_map)
                 abandoned: set[object] = set()
                 with tqdm(

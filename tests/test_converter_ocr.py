@@ -145,7 +145,10 @@ class TestMarkdownImageOcr:
 
         with (
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
-            patch("twomarkdown.converter.ocr.conversion_config.describe_figures", False),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.describe_figures",
+                False,
+            ),
         ):
             enriched = enrich_markdown_images(markdown, source, ocr_fn=empty_ocr)
 
@@ -181,7 +184,10 @@ class TestFetchRemoteImage:
     """Test cases for _fetch_remote_image()."""
 
     def test_fetch_remote_image_returns_none_when_disabled(self) -> None:
-        with patch("twomarkdown.converter.ocr.conversion_config.fetch_remote_images", False):
+        with patch(
+            "twomarkdown.converter.ocr.conversion_config.fetch_remote_images",
+            False,
+        ):
             assert _fetch_remote_image("https://example.com/img.png") is None
 
     @patch("twomarkdown.converter.ocr.requests.get")
@@ -196,7 +202,10 @@ class TestFetchRemoteImage:
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        with patch("twomarkdown.converter.ocr.conversion_config.fetch_remote_images", True):
+        with patch(
+            "twomarkdown.converter.ocr.conversion_config.fetch_remote_images",
+            True,
+        ):
             assert _fetch_remote_image("https://example.com/big.png") is None
 
         mock_get.assert_called_once_with(
@@ -217,7 +226,10 @@ class TestFetchRemoteImage:
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        with patch("twomarkdown.converter.ocr.conversion_config.fetch_remote_images", True):
+        with patch(
+            "twomarkdown.converter.ocr.conversion_config.fetch_remote_images",
+            True,
+        ):
             result = _fetch_remote_image("https://example.com/img.png")
 
         assert result == image_data
@@ -256,7 +268,10 @@ class TestOcrImageBytesHybrid:
         with (
             patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
-            patch("twomarkdown.converter.ocr.conversion_config.ocr_confidence_min", 60.0),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
+                60.0,
+            ),
             patch(
                 "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
                 return_value=("Tesseract text", 85.0),
@@ -275,7 +290,10 @@ class TestOcrImageBytesHybrid:
         with (
             patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
-            patch("twomarkdown.converter.ocr.conversion_config.ocr_confidence_min", 60.0),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
+                60.0,
+            ),
             patch(
                 "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
                 return_value=("", 10.0),
@@ -292,7 +310,10 @@ class TestOcrImageBytesHybrid:
         with (
             patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
-            patch("twomarkdown.converter.ocr.conversion_config.ocr_confidence_min", 60.0),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
+                60.0,
+            ),
             patch(
                 "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
                 return_value=("Low conf text", 10.0),

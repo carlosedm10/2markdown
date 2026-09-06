@@ -168,7 +168,10 @@ class TestPdfOcrFallback:
         with (
             patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
-            patch("twomarkdown.converter.ocr.conversion_config.ocr_confidence_min", 60.0),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
+                60.0,
+            ),
             patch(
                 "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
                 return_value=("", 10.0),

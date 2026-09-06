@@ -95,11 +95,17 @@ class TestCleanMarkdown:
     def test_clean_markdown_applies_pipeline_when_enabled(self) -> None:
         apostrophe = _utf8_as_latin1(b"\xe2\x80\x99")
         raw = f"docu-\nment{apostrophe}s\n\nNext"
-        with patch("twomarkdown.converter.clean.conversion_config.clean_markdown", True):
+        with patch(
+            "twomarkdown.converter.clean.conversion_config.clean_markdown",
+            True,
+        ):
             result = clean_markdown(raw)
         assert result == "document's\n\nNext"
 
     def test_clean_markdown_identity_when_disabled(self) -> None:
         raw = "docu-\nment\n\nunchanged"
-        with patch("twomarkdown.converter.clean.conversion_config.clean_markdown", False):
+        with patch(
+            "twomarkdown.converter.clean.conversion_config.clean_markdown",
+            False,
+        ):
             assert clean_markdown(raw) == raw

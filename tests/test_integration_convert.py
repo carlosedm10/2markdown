@@ -20,9 +20,9 @@ class TestIntegrationConvert:
     ) -> None:
         """process_batch() — converts sample.html to sample.md with body text."""
         input_dir, output_dir = batch_dirs
-        html_twomarkdown.= fixtures_dir / "sample.html"
+        html_src = fixtures_dir / "sample.html"
         (input_dir / "sample.html").write_text(
-            html_twomarkdown.read_text(encoding="utf-8"),
+            html_src.read_text(encoding="utf-8"),
             encoding="utf-8",
         )
 

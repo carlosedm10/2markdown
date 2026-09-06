@@ -106,11 +106,11 @@ def render_html(summary: dict[str, Any]) -> str:
     output_dir = str(summary.get("output_dir") or "")
     for row in files:
         status = str(row.get("status") or "")
-        twomarkdown.= _short_path(str(row.get("source") or ""), output_dir)
+        src = _short_path(str(row.get("source") or ""), output_dir)
         file_rows += (
             f'<tr class="st-{_esc(status)}">'
             f"<td>{_esc(_status_label(status))}</td>"
-            f"<td><code>{_esc(twomarkdown.}</code></td>"
+            f"<td><code>{_esc(src)}</code></td>"
             f"<td>{_esc(row.get('converter') or '—')}</td>"
             f"<td>{_esc(row.get('ocr_backend') or '—')}</td>"
             f"<td>{_ms(row.get('duration_ms'))}</td>"
@@ -289,11 +289,11 @@ def write_pdf(summary: dict[str, Any], output_dir: Path) -> Path:
     line("Files", size=13)
     for row in files:
         status = _status_label(str(row.get("status") or ""))
-        twomarkdown.= str(row.get("source") or "")
-        if len(twomarkdown. > 70:
-            twomarkdown.= "…" + twomarkdown.-69:]
+        src = str(row.get("source") or "")
+        if len(src) > 70:
+            src = "…" + src[-69:]
         line(
-            f"  {status:10}  {_ms(row.get('duration_ms')):>8}  {_rel(row.get('reliability')):>4}  {twomarkdown.",
+            f"  {status:10}  {_ms(row.get('duration_ms')):>8}  {_rel(row.get('reliability')):>4}  {src}",
             size=8,
         )
         if row.get("error"):

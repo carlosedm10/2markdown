@@ -1,4 +1,4 @@
-"""Test cases for Apple iWork conversion via preview.pdf (twomarkdown.converter.iwork)."""
+"""Apple iWork conversion via preview.pdf (twomarkdown.converter.iwork)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import pytest
 
 from twomarkdown.converter import iwork
 from twomarkdown.converter.iwork import IWorkConversionError
-
 
 PREVIEW_TEXT = "Hello iWork preview"
 

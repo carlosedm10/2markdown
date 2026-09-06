@@ -76,7 +76,7 @@ def convert_bundle(
 
         if preview is None or not preview.is_file():
             raise IWorkConversionError(
-                "no preview.pdf in bundle; export to PDF from Pages, Keynote, or Numbers"
+                "no preview.pdf in bundle; export PDF from Pages, Keynote, or Numbers"
             )
 
         if convert_pdf is not None:

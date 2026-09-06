@@ -24,7 +24,10 @@ class TestExtractPdfTables:
         path = tmp_path / "t.pdf"
         doc.save(path)
         doc.close()
-        with patch("twomarkdown.converter.tables.conversion_config.extract_tables", False):
+        with patch(
+            "twomarkdown.converter.tables.conversion_config.extract_tables",
+            False,
+        ):
             assert extract_pdf_tables(path) == []
 
     def test_extract_pdf_tables_never_raises_on_plain_pdf(self, tmp_path: Path) -> None:

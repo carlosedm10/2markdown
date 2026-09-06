@@ -6,12 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import MINIMAL_PNG_BYTES
 from twomarkdown.converter.filetype import (
     _read_prefix,
     effective_suffix,
     sniff_suffix,
 )
-from tests.conftest import MINIMAL_PNG_BYTES
 
 
 class TestFiletypeSniffing:

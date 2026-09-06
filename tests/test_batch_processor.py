@@ -373,7 +373,7 @@ class TestBatchProcessor:
     def test_process_batch_times_out_sequential_file(
         self, batch_dirs: tuple[Path, Path]
     ) -> None:
-        """process_batch() — sequential worker records timeout without waiting forever."""
+        """process_batch() — sequential timeout is recorded without hanging."""
         input_dir, output_dir = batch_dirs
         hung = input_dir / "slow.txt"
         hung.write_text("slow")
@@ -386,7 +386,10 @@ class TestBatchProcessor:
             return "ok"
 
         with (
-            patch("twomarkdown.batch.processor.conversion_config.file_timeout_sec", 0.2),
+            patch(
+                "twomarkdown.batch.processor.conversion_config.file_timeout_sec",
+                0.2,
+            ),
             patch("twomarkdown.batch.processor.conversion_config.parallel_workers", 1),
             patch(
                 "twomarkdown.converter.markitdown_converter.convert_file",
@@ -429,7 +432,10 @@ class TestBatchProcessor:
             return "ok"
 
         with (
-            patch("twomarkdown.batch.processor.conversion_config.file_timeout_sec", 0.2),
+            patch(
+                "twomarkdown.batch.processor.conversion_config.file_timeout_sec",
+                0.2,
+            ),
             patch("twomarkdown.batch.processor.conversion_config.parallel_workers", 2),
             patch(
                 "twomarkdown.converter.markitdown_converter.convert_file",
