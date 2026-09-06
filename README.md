@@ -14,10 +14,10 @@ make fresh-setup
 make build              # Tesseract OCR — fast, offline, no extra downloads
 # or
 make build ollama       # Ollama vision OCR — higher quality on images & scanned PDFs
-make start              # optional: keep backend container + host Ollama running
+make up                 # optional: keep backend container + host Ollama running
 ```
 
-`make fresh-setup` writes `.env` from the template and stops the stack.
+`make fresh-setup` writes `.env` from the template and tears the stack down (`make down`).
 
 `make build` builds the converter image and locks in your OCR mode:
 
@@ -94,10 +94,7 @@ Embedded files inside a bundle (e.g. `MyDoc.pages/Data/*.png`) are **not** conve
 
 Optional **Kreuzberg** backend for stronger Pages coverage (Elastic-2.0 license):
 
-```bash
-# In Docker image build, add the extra before make build
-uv sync --extra iwork-kreuzberg
-```
+Kreuzberg is an optional extra (`iwork-kreuzberg`) and is **not** in the default image. There is no `make` target for extras yet (see `INCONSISTENCIES.md`).
 
 Set `IWORK_BACKEND=kreuzberg` in `.env`.
 
@@ -135,14 +132,15 @@ OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has 
 
 | Target | Description |
 |--------|-------------|
-| `fresh-setup` | Create/reset `.env`, stop stack |
+| `fresh-setup` | Create/reset `.env`, `make down` |
 | `build` | Build image + enable Tesseract OCR |
 | `build ollama` | Build image + ensure host Ollama + pull vision model |
-| `start` | Start backend container (+ host Ollama if LLM enabled) |
+| `up` | Start backend container (+ host Ollama if LLM enabled) |
+| `down` | `docker compose down --remove-orphans` |
+| `restart` | Restart the backend container |
 | `process INPUT=...` | Convert a file or folder (mounts input + output only; use `VERBOSE=1` for `-v`) |
-| `stop` | Stop Docker containers |
 | `stop-ollama` | Stop host Ollama |
-| `tests` | Run unit tests in Docker |
+| `test` | Unit tests (`TEST=` for one path) |
 
 ## Development
 
@@ -155,9 +153,12 @@ Maintainer targets all run **inside Docker**. Do not run `uv add` / `uv lock` on
 | `make uv-lock` | Refresh `uv.lock` |
 | `make uv-lock-regenerate` | Regenerate the lock file from scratch |
 | `make uv-update` / `make uv-update PKG=foo` | Upgrade all packages, or one |
-| `make lint` / `make format` / `make tests` | Ruff and unit tests |
+| `make lint` / `make lint-fix` / `make format` | Ruff check, auto-fix, format |
+| `make test` / `make test TEST=path` | Unit tests |
+| `make test-integration` | Integration tests |
+| `make logs` / `make backend-shell` | Backend logs and shell |
 
-GitHub Actions runs **ruff** and unit tests on every push/PR. An optional integration job (Tesseract + `pytest -m integration`) also runs but is non-blocking (`continue-on-error`).
+GitHub Actions calls `make lint` and `make test` (`CI=true` → native `uv`). Optional `make test-integration` is non-blocking.
 
 ## Notes
 

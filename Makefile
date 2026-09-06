@@ -1,10 +1,21 @@
 OLLAMA_MODEL ?= moondream
 OLLAMA := $(if $(filter ollama,$(MAKECMDGOALS)),1,$(if $(OLLAMA),$(OLLAMA),0))
-
+SERVICE := backend-twomarkdown
 .DEFAULT_GOAL := help
 
 # Dummy goal so `make build ollama` works (Make has no --flags)
 ollama: ; @:
+
+# Native transport when GitHub Actions sets CI=true, or NATIVE=1 locally.
+ifneq ($(filter true 1,$(CI) $(NATIVE)),)
+define run_uv
+uv $(1)
+endef
+else
+define run_uv
+docker compose run --rm $(SERVICE) uv $(1)
+endef
+endif
 
 # ------------------------------ Help ------------------------------ #
 .PHONY: help
@@ -13,12 +24,13 @@ help:
 	@echo "2markdown — available targets"
 	@echo ""
 	@echo "Setup:"
-	@echo "  make fresh-setup              Copy env_template to .env and stop stack"
+	@echo "  make fresh-setup              Copy env_template to .env and tear down stack"
 	@echo "  make build                    Build converter image (Tesseract OCR, default)"
 	@echo "  make build ollama             Build image, start host Ollama, pull moondream"
 	@echo "  make build ollama OLLAMA_MODEL=llava   Pull a different vision model"
-	@echo "  make start                    Start backend container (+ host Ollama if enabled)"
-	@echo "  make stop                     Stop Docker containers"
+	@echo "  make up                       Start backend container (+ host Ollama if enabled)"
+	@echo "  make down                     Stop Docker containers (compose down --remove-orphans)"
+	@echo "  make restart                  Restart the backend container"
 	@echo "  make stop-ollama              Stop host Ollama"
 	@echo "  make process INPUT=\"/path\" [VERBOSE=1]   Convert (mounts input + output only)"
 	@echo ""
@@ -34,27 +46,30 @@ help:
 	@echo "  make backend-shell            Open a shell in the backend container"
 	@echo ""
 	@echo "Debugging:"
-	@echo "  make show-backend-logs        Tail backend logs"
+	@echo "  make logs                     Tail backend logs"
 	@echo ""
 	@echo "Code quality:"
-	@echo "  make lint                     Run ruff check"
-	@echo "  make format                   Run ruff format"
+	@echo "  make format                   ruff format"
+	@echo "  make lint-fix                 ruff check --fix"
+	@echo "  make lint                     ruff check"
 	@echo ""
 	@echo "Testing:"
-	@echo "  make tests                    Run unit tests (exclude integration)"
-	@echo "  make test TEST=tests/foo.py   Run a specific test file or path"
+	@echo "  make test                     Unit tests (exclude integration)"
+	@echo "  make test TEST=tests/foo.py   Run a specific test path"
+	@echo "  make test-integration         Integration tests"
 	@echo ""
 	@echo "Danger zone:"
-	@echo "  make clean                    Stop stack and remove local caches"
-	@echo "  make clean-all                Remove local images (re-run make build after)"
+	@echo "  make clean                    NUCLEAR: compose down --volumes --remove-orphans + caches"
+	@echo "  make clean-builder            clean + docker builder prune"
 
-# ------------------------------ Setup ------------------------------ #
-.PHONY: fresh-setup build start process stop stop-ollama clean
+# ------------------------------ Docker Compose ------------------------------ #
+.PHONY: fresh-setup build up restart process down stop-ollama
 
-# Reset config and stop stack. Run once on a new machine.
+# Reset config and tear down stack. Run once on a new machine.
 fresh-setup:
+	@echo ":: fresh-setup: ."
 	cp env_template .env
-	$(MAKE) stop
+	$(MAKE) down
 	@echo "Ready. Next: make build   OR   make build ollama (requires Ollama on host)"
 
 # Build the converter image.
@@ -62,6 +77,7 @@ fresh-setup:
 #   make build ollama   -> also ensure host Ollama and pull moondream (~2 GB RAM)
 #   make build ollama OLLAMA_MODEL=llava   -> pull a different vision model
 build:
+	@echo ":: build: ."
 	@test -f .env || (echo "Run make fresh-setup first." && exit 1)
 	docker compose build
 ifeq ($(OLLAMA),1)
@@ -74,14 +90,18 @@ else
 	@echo "Tesseract OCR ready."
 endif
 
-# Start backend container and ensure host Ollama when LLM OCR is enabled.
-start:
+up:
+	@echo ":: up: backend"
 	@test -f .env || (echo "Run make fresh-setup && make build first." && exit 1)
-	docker compose up -d backend-twomarkdown
+	docker compose up -d $(SERVICE)
 	@if grep -q '^LLM_ENABLED=true' .env; then \
 		python3 scripts/ollama_host.py ensure; \
 	fi
-	@echo "Stack started."
+	@echo "Stack up (container $(SERVICE)). Convert with: make process INPUT=..."
+
+restart:
+	@echo ":: restart: backend"
+	docker compose restart $(SERVICE)
 
 # Convert a file or folder on your machine.
 # Usage: make process INPUT="/path/to/file-or-folder" [VERBOSE=1]
@@ -90,6 +110,7 @@ start:
 #   /docs/reports     -> /docs/reports_2markdown/
 #   /docs/report.pdf  -> /docs/report_2markdown/
 process:
+	@echo ":: process: backend"
 	@test -f .env || (echo "Run make fresh-setup && make build first." && exit 1)
 	@test -n "$(INPUT)" || (echo 'Usage: make process INPUT="/path/to/file-or-folder"' && exit 1)
 	@set -e; \
@@ -115,90 +136,109 @@ process:
 	docker compose run --rm \
 		-v "$$INPUT_ABS:$$INPUT_ABS" \
 		-v "$$OUTPUT_ABS:$$OUTPUT_ABS" \
-		backend-twomarkdown uv run python -m src.cli \
+		$(SERVICE) uv run python -m src.cli \
 		--input "$$INPUT_ABS" \
 		--output "$$OUTPUT_ABS" \
 		$$OLLAMA_FLAG $$VERBOSE_FLAG
 
-stop:
+down:
+	@echo ":: down: ."
 	docker compose down --remove-orphans
 
 stop-ollama:
-	python3 scripts/ollama_host.py stop
-
+	@echo ":: stop-ollama: host"
+	@python3 scripts/ollama_host.py stop
 
 # ----------------------------- Backend Package Management ----------------------------- #
 .PHONY: uv-lock uv-add uv-update uv-remove uv-lock-regenerate
 
 # Usage:
-#   make uv-add PKG="package==version"
+#   make uv-add PKG="package[extras]==version"
 #   make uv-update
 #   make uv-update PKG=foo
 #   make uv-remove PKG=foo
 uv-lock:
-	docker compose run --rm backend-twomarkdown uv lock
+	@echo ":: uv-lock: backend"
+	docker compose run --rm $(SERVICE) uv lock
 
 uv-add:
-	docker compose run --rm backend-twomarkdown uv add $(PKG)
+	@echo ":: uv-add: backend"
+	docker compose run --rm $(SERVICE) uv add $(PKG)
 
 uv-update:
+	@echo ":: uv-update: backend"
 ifeq ($(PKG),)
-	docker compose run --rm backend-twomarkdown uv lock --upgrade
+	docker compose run --rm $(SERVICE) uv lock --upgrade
 else
-	docker compose run --rm backend-twomarkdown uv lock --upgrade-package $(PKG)
+	docker compose run --rm $(SERVICE) uv lock --upgrade-package $(PKG)
 endif
 
 uv-remove:
-	docker compose run --rm backend-twomarkdown uv remove $(PKG)
+	@echo ":: uv-remove: backend"
+	docker compose run --rm $(SERVICE) uv remove $(PKG)
 
 uv-lock-regenerate:
-	docker compose run --rm backend-twomarkdown uv lock --refresh
+	@echo ":: uv-lock-regenerate: backend"
+	docker compose run --rm $(SERVICE) uv lock --refresh
 
 # ----------------------------- Terminals ----------------------------- #
 .PHONY: backend-shell
 
 backend-shell:
-	docker compose exec backend-twomarkdown bash
+	@echo ":: shell: backend"
+	docker compose exec $(SERVICE) bash
 
 # ----------------------------- Debugging ----------------------------- #
-.PHONY: show-backend-logs
+.PHONY: logs
 
-show-backend-logs:
-	docker compose logs -f backend-twomarkdown
+logs:
+	@echo ":: logs: backend"
+	docker compose logs -f $(SERVICE)
 
 # ----------------------------- Code Formatting ----------------------------- #
-.PHONY: lint format
-
-lint:
-	docker compose run --rm backend-twomarkdown uv run --extra dev ruff check src/ tests/
+.PHONY: format lint-fix lint
 
 format:
-	docker compose run --rm backend-twomarkdown uv run --extra dev ruff format src/ tests/
+	@echo ":: format: backend"
+	$(call run_uv,run --extra dev ruff format src/ tests/)
+
+lint-fix:
+	@echo ":: lint-fix: backend"
+	$(call run_uv,run --extra dev ruff check --fix src/ tests/)
+
+lint:
+	@echo ":: lint: backend"
+	$(call run_uv,run --extra dev ruff check src/ tests/)
 
 # ----------------------------- Testing ----------------------------- #
-.PHONY: tests test
+.PHONY: test test-integration
 
-tests:
-	docker compose run --rm backend-twomarkdown uv run --extra dev pytest tests/ -m "not integration" -v
-
+# Usage:
+#   make test
+#   make test TEST=tests/foo.py
 test:
-	docker compose run --rm backend-twomarkdown uv run --extra dev pytest $(TEST) -v
+	@echo ":: test: backend"
+ifeq ($(TEST),)
+	$(call run_uv,run --extra dev pytest tests/ -m "not integration" -v)
+else
+	$(call run_uv,run --extra dev pytest $(TEST) -v)
+endif
+
+test-integration:
+	@echo ":: test-integration: backend"
+	$(call run_uv,run --extra dev pytest tests/ -m integration -v)
 
 # ----------------------------- ⛔️ DANGER ZONE ⛔️ ----------------------------- #
-.PHONY: clean-all
+.PHONY: clean clean-builder
 
-# Soft clean: stop stack, drop local Python caches, prune dangling Docker images.
+# NUCLEAR: named volumes included. `make build` + `make up` afterwards.
 clean:
-	$(MAKE) stop
+	@echo ":: clean: ."
+	docker compose down --volumes --remove-orphans
 	@find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -exec rm -rf {} + 2>/dev/null || true
-	docker image prune -f
-	@echo "Clean complete. Run make build to use the converter again."
+	@echo "Clean complete. Run make build && make up to start again."
 
-
-# Hard clean: removes locally built images.
-clean-all:
-	@echo "WARNING: Removes rebuilt images. Re-run make build afterward."
-	docker compose down --volumes --remove-orphans --rmi local 2>/dev/null || true
-	@find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -exec rm -rf {} + 2>/dev/null || true
-	docker image prune -f
-	@echo "Clean-all complete. Run make build (or make build ollama) to start fresh."
+clean-builder: clean
+	@echo ":: clean-builder: ."
+	docker builder prune -f
+	@echo "Builder prune complete. Run make build afterwards."

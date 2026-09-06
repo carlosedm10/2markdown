@@ -5,20 +5,8 @@ alwaysApply: true
 
 # Makefile is the public interface
 
-Follow the project skill [makefile-operations](../skills/makefile-operations/SKILL.md).
+Follow [.agents/skills/makefile-operations/SKILL.md](../../.agents/skills/makefile-operations/SKILL.md).
 
-Never run `uv add`, `uv remove`, `uv lock`, or `uv sync` on the host. Use:
+Never run `uv add`, `uv remove`, `uv lock`, or `uv sync` on the host. Use `make uv-add`, `make uv-remove`, `make uv-lock`, `make lint`, `make test`.
 
-```bash
-make uv-add PKG="package>=1.0"
-make uv-remove PKG=package
-make uv-lock
-make uv-lock-regenerate
-make uv-update
-make uv-update PKG=foo
-make tests
-make lint
-make format
-```
-
-Do not hand-edit `pyproject.toml` / `uv.lock` to add or drop dependencies.
+Lifecycle: `make up` / `make down` / `make build` / `make restart` — not `start`/`stop`.
