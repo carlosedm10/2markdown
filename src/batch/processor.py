@@ -23,6 +23,8 @@ from src.frontmatter import build_frontmatter
 
 logger = logging.getLogger(__name__)
 
+_OCR_FN_DEFAULT: object = object()
+
 
 @dataclass
 class BatchResult:
@@ -259,14 +261,14 @@ def _write_chunks(output_md: Path, markdown: str) -> None:
         logger.debug("Chunk sidecar skipped: %s", exc)
 
 
-def _convert_one(
+def convert_file_to_markdown(
     source_path: Path,
     *,
-    input_dir: Path,
-    output_dir: Path,
-    ocr_fn: Callable[[bytes], str] | None,
-    show_progress: bool,
-) -> tuple[str, int]:
+    show_progress: bool = False,
+    ocr_fn: Callable[[bytes], str] | None | object = _OCR_FN_DEFAULT,
+) -> str:
+    """Convert one local file to markdown text (no disk write, no frontmatter)."""
+    resolved_ocr = _get_ocr_fn() if ocr_fn is _OCR_FN_DEFAULT else ocr_fn
     markdown = _convert_source_to_markdown(source_path, show_progress=show_progress)
     if not markdown or not markdown.strip():
         raise ConversionError("empty result")
@@ -275,10 +277,25 @@ def _convert_one(
         markdown = ocr.enrich_markdown_images(
             markdown,
             source_path,
-            ocr_fn=ocr_fn,
+            ocr_fn=resolved_ocr if callable(resolved_ocr) else None,
         )
 
-    markdown = _clean(markdown)
+    return _clean(markdown)
+
+
+def _convert_one(
+    source_path: Path,
+    *,
+    input_dir: Path,
+    output_dir: Path,
+    ocr_fn: Callable[[bytes], str] | None,
+    show_progress: bool,
+) -> tuple[str, int]:
+    markdown = convert_file_to_markdown(
+        source_path,
+        show_progress=show_progress,
+        ocr_fn=ocr_fn,
+    )
 
     suffix = _effective_suffix(source_path)
     output_md = _mirror_output_path(source_path, input_dir, output_dir)

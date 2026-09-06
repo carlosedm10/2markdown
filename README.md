@@ -46,6 +46,22 @@ make process INPUT="/Users/you/Documents/reports" WORKERS=4  # parallel files
 
 When `llm_enabled` is true in `src/config.py` (`make build ollama`), `make process` ensures host Ollama is running before converting.
 
+## Python library
+
+`2markdown` is not a valid Python identifier. The installable name and import are **`twomarkdown`**:
+
+```python
+import twomarkdown
+
+markdown = twomarkdown("report.pdf")           # str, in-memory
+markdown = twomarkdown.convert("report.pdf")   # same
+result = twomarkdown.convert("docs/")          # BatchResult; writes docs_2markdown/
+```
+
+Install from this repo (`pip install .` / `uv add ./2markdown`) and provide the same native extras the Docker image has for OCR (Tesseract on PATH, optional Ollama). The Make/Docker flow is still the supported full toolchain.
+
+Bytes need a type: `twomarkdown(data, suffix=".pdf")`.
+
 ### What happens
 
 1. Only the input path and the sibling `*_2markdown` output directory are mounted (same absolute paths).

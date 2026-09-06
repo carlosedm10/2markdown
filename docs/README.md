@@ -18,13 +18,15 @@ These names repeat in config, CLI flags, the manifest, and frontmatter. They *ar
 ## How it's built
 
 ```
-CLI (src.cli) → paths → processor → walker (optional zip explode, magic-byte suffix)
+CLI (src.cli) or library (import twomarkdown → src.api)
+                              ↓
+                    paths → processor → walker (optional zip explode, magic-byte suffix)
                               ↓
          iWork | e-reader | eml | xlsx | legacy Office | MarkItDown
                               ↓
          PDF compose (pages, OCR prose, tables, assets) | image OCR / figures
                               ↓
-         clean markdown → frontmatter + .md + manifest [+ optional .chunks.json]
+         clean markdown → string (library file) or frontmatter + .md + manifest (batch)
 ```
 
 ### The principles that matter
@@ -36,7 +38,7 @@ CLI (src.cli) → paths → processor → walker (optional zip explode, magic-by
 
 ## How data flows
 
-- **Reads:** a host path (file or tree). `make process` bind-mounts only that path and the sibling output directory.
+- **Reads:** a host path (file or tree), or in-process bytes via `twomarkdown.convert`. `make process` bind-mounts only that path and the sibling output directory.
 - **Writes:** mirrored `.md` files (YAML frontmatter includes `source`, `ocr_backend`, `title`, `ocr_pages`, `tables`, `language`, `char_count`), the manifest (checksum + duration), optional `_assets/` and `.chunks.json`. OCR text is cached under the output dir.
 - **OCR:** Tesseract first when hybrid is on; low confidence or empty text can call Ollama. Tiny images are skipped. Remote images are fetched only if enabled, capped at 8 MiB.
 
@@ -61,10 +63,11 @@ CLI (src.cli) → paths → processor → walker (optional zip explode, magic-by
 - **Ollama is not stopped by `make down`** — tearing down Docker must not kill a host daemon other tools use (`make stop-ollama` is explicit).
 - **Tesseract then vision** — hybrid OCR spends GPU only when Tesseract confidence is low.
 - **Make is still the process CLI** — `VERBOSE`, `DRY_RUN`, and `WORKERS` are Make vars forwarded into `src.cli`; converter knobs live in `src/config.py`.
+- **Library import is `twomarkdown`** — `import 2markdown` is invalid Python. `twomarkdown(path)` / `convert(path)` return a markdown string for one file; a directory still writes a sibling `*_2markdown/` folder and returns `BatchResult`. Docker remains the batteries-included runtime (Tesseract in the image). Internals stay `src.*`.
 - **Settings in code, secrets in `.env`** — flags and tuning are Pydantic `BaseModel` defaults; `Secrets` is the only `BaseSettings` class and reads `.env`.
 
 ## Where the details live
 
-- The code — `src/cli.py`, `src/batch/`, `src/converter/`, `src/agents/image_ocr.py`.
+- The code — `src/cli.py`, `src/api.py`, `src/batch/`, `src/converter/`, `src/agents/image_ocr.py`.
 - Product how-to — [README.md](../README.md) (setup, formats, `src/config.py`).
 - Agent skills — `.agents/skills/document-code`, `.agents/skills/makefile-operations`.

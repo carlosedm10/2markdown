@@ -1,6 +1,6 @@
 # 2markdown — Agent Instructions
 
-Batch CLI that converts local files and folders to Markdown (Docker + optional host Ollama OCR). The installable package imports as `src.*`.
+Batch CLI that converts local files and folders to Markdown (Docker + optional host Ollama OCR). Internal modules import as `src.*`. Application code should `import twomarkdown` (`2markdown` is not a valid identifier).
 
 Read before changing anything:
 
