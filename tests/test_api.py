@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 import twomarkdown
-from src.api import convert, convert_batch, convert_file
+from src.api import convert, convert_file
 from src.batch.processor import BatchResult
 from src.config import conversion_config
 
@@ -51,7 +51,9 @@ class TestConvertFile:
 
 
 class TestConvertBatch:
-    def test_directory_returns_batch_result(self, batch_dirs: tuple[Path, Path]) -> None:
+    def test_directory_returns_batch_result(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
         input_dir, output_dir = batch_dirs
         (input_dir / "a.txt").write_text("A")
         with patch(
@@ -63,9 +65,7 @@ class TestConvertBatch:
         assert isinstance(result, BatchResult)
         assert result.converted == 1
 
-    def test_file_with_output_returns_written_markdown(
-        self, tmp_path: Path
-    ) -> None:
+    def test_file_with_output_returns_written_markdown(self, tmp_path: Path) -> None:
         source = tmp_path / "doc.txt"
         source.write_text("body")
         out = tmp_path / "out"

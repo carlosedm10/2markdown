@@ -129,7 +129,10 @@ def convert_batch(
     show_progress: bool | None = None,
     dry_run: bool = False,
 ) -> BatchResult:
-    """Walk a file or folder and write Markdown under `output` (sibling `*_2markdown` by default)."""
+    """Walk a file or folder and write Markdown under `output`.
+
+    Default output is a sibling `*_2markdown` directory.
+    """
     path = Path(source)
     if not path.exists():
         raise FileNotFoundError(path)
