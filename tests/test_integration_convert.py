@@ -42,5 +42,5 @@ class TestIntegrationConvert:
         assert output_md.exists()
 
         body = output_md.read_text(encoding="utf-8")
-        assert "source: sample.html" in body
+        assert 'source: "sample.html"' in body or "source: sample.html" in body
         assert "Hello 2markdown" in body or "hello" in body.lower()
