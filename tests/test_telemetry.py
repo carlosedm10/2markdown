@@ -88,6 +88,10 @@ class TestReport:
         body = html_path.read_text(encoding="utf-8")
         assert "Exported" in body
         assert "notes.txt" in body
+        assert "markitdown" in body
+        trace = trace_path.read_text(encoding="utf-8")
+        assert "notes.txt" in trace
+        assert '"converter": "markitdown"' in trace
 
     def test_render_html_lists_failures(self, tmp_path: Path) -> None:
         manifest = Manifest(tmp_path / ".2markdown-manifest.json")

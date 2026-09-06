@@ -123,7 +123,9 @@ def build_summary(
             "success_rate": round(success_rate, 4),
         },
         "reliability": {
-            "mean": round(mean_reliability, 3) if mean_reliability is not None else None,
+            "mean": (
+                round(mean_reliability, 3) if mean_reliability is not None else None
+            ),
             "n": len(reliabilities),
             "how": (
                 "Failed files score 0. Empty output scores 0.15. "

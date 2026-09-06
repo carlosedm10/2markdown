@@ -6,12 +6,13 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-_batch: ContextVar["_BatchCollector | None"] = ContextVar("telemetry_batch", default=None)
+# Process-wide so worker threads (file timeout pool) see the same run.
+_batch_lock = threading.Lock()
+_batch: _BatchCollector | None = None
 _tls = threading.local()
 
 
@@ -102,19 +103,24 @@ class _BatchCollector:
 
 
 def current_batch() -> _BatchCollector | None:
-    return _batch.get()
+    with _batch_lock:
+        return _batch
 
 
 def begin_batch() -> _BatchCollector:
+    global _batch
     collector = _BatchCollector()
-    _batch.set(collector)
+    with _batch_lock:
+        _batch = collector
     _tls.file = None
     return collector
 
 
 def end_batch() -> _BatchCollector | None:
-    collector = _batch.get()
-    _batch.set(None)
+    global _batch
+    with _batch_lock:
+        collector = _batch
+        _batch = None
     return collector
 
 
@@ -156,7 +162,7 @@ def end_file() -> FileTrace:
         notes=list(state.get("notes") or []),
     )
     _tls.file = None
-    collector = _batch.get()
+    collector = current_batch()
     if collector is not None:
         collector.add_file(trace)
     return trace
@@ -165,7 +171,7 @@ def end_file() -> FileTrace:
 @contextmanager
 def span(name: str, **attrs: Any) -> Iterator[None]:
     """Record a named interval. No-op when no batch is active."""
-    collector = _batch.get()
+    collector = current_batch()
     state = _file_state()
     if collector is None and not state:
         yield
