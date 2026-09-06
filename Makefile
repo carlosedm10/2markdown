@@ -32,7 +32,7 @@ help:
 	@echo "  make down                     Stop Docker containers (compose down --remove-orphans)"
 	@echo "  make restart                  Restart the backend container"
 	@echo "  make stop-ollama              Stop host Ollama"
-	@echo "  make process INPUT=\"/path\" [VERBOSE=1]   Convert (mounts input + output only)"
+	@echo "  make process INPUT=\"/path\" [VERBOSE=1] [DRY_RUN=1] [WORKERS=n]"
 	@echo ""
 	@echo "Backend package management:"
 	@echo "  make uv-lock                  Refresh uv.lock"
@@ -104,7 +104,7 @@ restart:
 	docker compose restart $(SERVICE)
 
 # Convert a file or folder on your machine.
-# Usage: make process INPUT="/path/to/file-or-folder" [VERBOSE=1]
+# Usage: make process INPUT="/path/to/file-or-folder" [VERBOSE=1] [DRY_RUN=1] [WORKERS=n]
 #
 # Output is written next to the input:
 #   /docs/reports     -> /docs/reports_2markdown/
@@ -133,13 +133,17 @@ process:
 	fi; \
 	VERBOSE_FLAG=""; \
 	if [ "$(VERBOSE)" = "1" ]; then VERBOSE_FLAG="-v"; fi; \
+	DRY_RUN_FLAG=""; \
+	if [ "$(DRY_RUN)" = "1" ]; then DRY_RUN_FLAG="--dry-run"; fi; \
+	WORKERS_FLAG=""; \
+	if [ -n "$(WORKERS)" ]; then WORKERS_FLAG="--workers $(WORKERS)"; fi; \
 	docker compose run --rm \
 		-v "$$INPUT_ABS:$$INPUT_ABS" \
 		-v "$$OUTPUT_ABS:$$OUTPUT_ABS" \
 		$(SERVICE) uv run python -m src.cli \
 		--input "$$INPUT_ABS" \
 		--output "$$OUTPUT_ABS" \
-		$$OLLAMA_FLAG $$VERBOSE_FLAG
+		$$OLLAMA_FLAG $$VERBOSE_FLAG $$DRY_RUN_FLAG $$WORKERS_FLAG
 
 down:
 	@echo ":: down: ."

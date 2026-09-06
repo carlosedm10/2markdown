@@ -40,6 +40,8 @@ The converter reaches host Ollama at `http://host.docker.internal:11434/v1` (set
 make process INPUT="/Users/you/Documents/reports"
 make process INPUT="/Users/you/Documents/report.pdf"
 make process INPUT="/Users/you/Documents/reports" VERBOSE=1   # verbose logs
+make process INPUT="/Users/you/Documents/reports" DRY_RUN=1  # list files, write nothing
+make process INPUT="/Users/you/Documents/reports" WORKERS=4  # parallel files
 ```
 
 When `LLM_ENABLED=true`, `make process` ensures host Ollama is running before converting.
@@ -83,7 +85,7 @@ MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, 
 | `.mobi`, `.azw`, `.azw3` | Unpacked HTML → markdown chapters |
 | `.eml` | Native RFC 822 (From/To/Subject + body) |
 | `.xlsx` | Native sheets as `## Sheet:` + GFM tables |
-| `.doc`, `.ppt` | LibreOffice/`soffice` if installed on the converter image |
+| `.doc`, `.ppt` | LibreOffice/`soffice` if on PATH (not in the default image) |
 
 Plain `.zip` archives are unpacked into the output tree and converted (Office/iWork zips are left intact). File type can be sniffed from magic bytes (`SNIFF_FILETYPE=true`).
 
@@ -95,7 +97,7 @@ Plain `.zip` archives are unpacked into the output tree and converted (Office/iW
 | `.key` | [keynote-parser](https://pypi.org/project/keynote-parser/) | Slide text from IWA archives |
 | `.pages` | `preview.pdf` when present, else IWA text | Weaker than export; see below |
 
-Embedded files inside a bundle (e.g. `MyDoc.pages/Data/*.png`) are **not** converted separately — only the bundle root is processed.
+Embedded files inside a bundle (e.g. `MyDoc.pages/Data/*.png`) are **not** separate batch items. Raster images under `Data/` are listed in the bundle markdown and OCR'd when OCR is on.
 
 Optional **Kreuzberg** backend for stronger Pages coverage (Elastic-2.0 license):
 
@@ -103,7 +105,7 @@ Kreuzberg is an optional extra (`iwork-kreuzberg`) and is **not** in the default
 
 Set `IWORK_BACKEND=kreuzberg` in `.env`.
 
-Legacy `.doc`/`.ppt` and video files soft-fail with a warning; the batch continues.
+`.doc`/`.ppt` convert via LibreOffice when `soffice` is on PATH; otherwise that file fails and the batch continues. Video files still soft-fail.
 
 ### iWork limitations
 
@@ -156,7 +158,7 @@ If Tesseract confidence is below `OCR_CONFIDENCE_MIN` and Ollama is enabled, 2ma
 | `up` | Start backend container (+ host Ollama if LLM enabled) |
 | `down` | `docker compose down --remove-orphans` |
 | `restart` | Restart the backend container |
-| `process INPUT=...` | Convert a file or folder (mounts input + output only; use `VERBOSE=1` for `-v`) |
+| `process INPUT=...` | Convert (mounts input + output only; `VERBOSE=1`, `DRY_RUN=1`, `WORKERS=n`) |
 | `stop-ollama` | Stop host Ollama |
 | `test` | Unit tests (`TEST=` for one path) |
 

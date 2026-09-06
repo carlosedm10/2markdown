@@ -14,12 +14,13 @@ Findings from a code audit (2026-09-06), grouped by priority. Each verified by r
 
 ## Worth a look
 
-4. **Batch is strictly sequential** — Ollama-per-page on large PDFs will be slow; no worker pool.
-5. **`IWORK_USE_APP_EXPORT` is Darwin-only** — AppleScript export never runs inside the Linux converter image; dead in the documented Docker flow.
-6. **No LICENSE** — public repo.
+4. **`IWORK_USE_APP_EXPORT` is a no-op in Docker** — `convert_bundle` logs once and ignores it; AppleScript never runs in the Linux image.
+5. **No LICENSE** — public repo.
+6. **LibreOffice is not in the image** — `.doc`/`.ppt` only convert if `soffice` is already on PATH.
 
 ## Checked and clean
 
 - **PDF OCR threshold** — `should_fallback(..., pdf_path=)` and `extract_pages` inspect per-page fitz text, not total markdown length (`src/converter/pdf_ocr.py`).
 - **OCR flag coherence** — `resolve_ocr_backend` treats `--ocr-backend=ollama` as LLM-on (`src/cli.py`).
-- **Manifest skip** — retries `failed` and different `ocr_backend` (`src/batch/manifest.py`).
+- **Manifest skip** — retries `failed`, different `ocr_backend`, and checksum mismatch (`src/batch/manifest.py`).
+- **Batch parallelism** — `PARALLEL_WORKERS` / `--workers` uses a thread pool (`src/batch/processor.py`).
