@@ -1,10 +1,12 @@
 """Tests for file type sniffing (src.converter.filetype)."""
 
+import errno
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from src.converter.filetype import effective_suffix, sniff_suffix
+from src.converter.filetype import _read_prefix, effective_suffix, sniff_suffix
 from tests.conftest import MINIMAL_PNG_BYTES
 
 
@@ -50,3 +52,33 @@ class TestFiletypeSniffing:
                 False,
             )
             assert effective_suffix(png_path) == ".bin"
+
+    def test_sniff_suffix_falls_back_to_path_when_icloud_lock_persists(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "book.epub"
+        path.write_bytes(b"PK\x03\x04")
+
+        with patch(
+            "src.converter.filetype._read_prefix",
+            side_effect=OSError(errno.EDEADLK, "Resource deadlock avoided"),
+        ):
+            assert sniff_suffix(path) == ".epub"
+
+    def test_read_prefix_retries_transient_deadlock(self, tmp_path: Path) -> None:
+        path = tmp_path / "doc.pdf"
+        path.write_bytes(b"%PDF-1.4 content")
+        attempts = {"n": 0}
+        original_open = Path.open
+
+        def flaky(self: Path, *args: object, **kwargs: object):
+            if self.resolve() == path.resolve() and attempts["n"] < 2:
+                attempts["n"] += 1
+                raise OSError(errno.EDEADLK, "Resource deadlock avoided")
+            return original_open(self, *args, **kwargs)
+
+        with patch.object(Path, "open", flaky), patch(
+            "src.converter.filetype.time.sleep", return_value=None
+        ):
+            assert _read_prefix(path).startswith(b"%PDF")
+        assert attempts["n"] == 2

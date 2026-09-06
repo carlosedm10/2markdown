@@ -84,3 +84,67 @@ class TestIWorkConverter:
         ):
             with pytest.raises(IWorkConversionError, match="preview.pdf"):
                 iwork.convert_bundle(bundle)
+
+    def test_convert_bundle_pages_uses_preview_image_when_iwa_empty(
+        self, tmp_path: Path
+    ) -> None:
+        """convert_bundle() — Pages without PDF/IWA OCR the preview image."""
+        bundle = tmp_path / "doc.pages"
+        bundle.mkdir()
+        (bundle / "Metadata").mkdir()
+        (bundle / "preview.jpg").write_bytes(b"fake-jpeg")
+
+        with patch(
+            "src.converter.iwork._extract_iwa_text_from_bundle",
+            return_value="",
+        ):
+            markdown = iwork.convert_bundle(
+                bundle,
+                convert_image=lambda p: "Preview OCR text",
+            )
+
+        assert markdown == "Preview OCR text"
+
+    def test_convert_bundle_pages_tries_full_preview_after_empty_web(
+        self, tmp_path: Path
+    ) -> None:
+        """convert_bundle() — empty preview-web.jpg does not skip preview.jpg."""
+        bundle = tmp_path / "doc.pages"
+        bundle.mkdir()
+        (bundle / "Metadata").mkdir()
+        (bundle / "preview-web.jpg").write_bytes(b"web")
+        (bundle / "preview.jpg").write_bytes(b"full")
+
+        def convert_image(path: Path) -> str:
+            return "Full page OCR" if path.name == "preview.jpg" else ""
+
+        with patch(
+            "src.converter.iwork._extract_iwa_text_from_bundle",
+            return_value="",
+        ):
+            markdown = iwork.convert_bundle(bundle, convert_image=convert_image)
+
+        assert markdown == "Full page OCR"
+
+    def test_convert_bundle_numbers_retries_isolated_on_proto_conflict(
+        self, tmp_path: Path
+    ) -> None:
+        """convert_bundle() — Numbers protobuf pool clashes retry in a subprocess."""
+        path = tmp_path / "sheet.numbers"
+        path.write_bytes(b"not-a-real-numbers-file")
+
+        with patch(
+            "src.converter.iwork._numbers_document_to_markdown",
+            side_effect=TypeError(
+                "Couldn't build proto file into descriptor pool: "
+                "duplicate file name TSDArchives.proto"
+            ),
+        ):
+            with patch(
+                "src.converter.iwork._numbers_document_to_markdown_isolated",
+                return_value="## Sheet",
+            ) as mock_isolated:
+                markdown = iwork.convert_bundle(path)
+
+        mock_isolated.assert_called_once_with(path)
+        assert markdown == "## Sheet"

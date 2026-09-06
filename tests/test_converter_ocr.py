@@ -42,6 +42,13 @@ class TestRasterImageDetection:
     def test_is_raster_image_false_for_non_images(self) -> None:
         assert not is_raster_image(Path("doc.pdf"))
 
+    def test_is_raster_image_true_for_png_bytes_named_pdf(
+        self, tmp_path: Path, minimal_png_bytes: bytes
+    ) -> None:
+        path = tmp_path / "Foto.pdf"
+        path.write_bytes(minimal_png_bytes)
+        assert is_raster_image(path)
+
 
 class TestStandaloneImageOcr:
     """Test cases for convert_image_file()."""

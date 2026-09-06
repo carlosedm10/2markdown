@@ -47,6 +47,7 @@ python_classes = ["Test*"]
 addopts = "-ra"
 markers = [
     "integration: marks tests that need markitdown/tesseract (deselect with '-m not integration')",
+    "bench: method-comparison timing harness (deselect with '-m not bench')",
 ]
 
 [tool.ruff]

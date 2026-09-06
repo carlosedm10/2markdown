@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import time
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -58,37 +60,74 @@ def _convert_epub(path: Path) -> str:
     import ebooklib
     from ebooklib import epub
 
+    from src.converter.filetype import materialize_local_copy
+
+    book = None
+    local: Path | None = None
+    last_exc: Exception | None = None
     try:
-        book = epub.read_epub(str(path))
-    except Exception as exc:
-        raise EReaderConversionError(f"epub read failed: {exc}") from exc
+        for attempt in range(4):
+            if local is not None:
+                local.unlink(missing_ok=True)
+                local = None
+            try:
+                local = materialize_local_copy(path, suffix=".epub")
+                data = local.read_bytes()
+                if len(data) < 22 or not data.startswith(b"PK"):
+                    raise EReaderConversionError(
+                        f"epub is not a complete zip ({len(data)} bytes); "
+                        "if this is iCloud Drive, open the file in Finder to finish "
+                        "downloading, then retry"
+                    )
+                book = epub.read_epub(str(local))
+                break
+            except EReaderConversionError:
+                raise
+            except (OSError, zipfile.BadZipFile) as exc:
+                last_exc = exc
+                logger.warning("EPUB read retry %s for %s: %s", attempt + 1, path, exc)
+                time.sleep(0.1 * (2**attempt))
+            except Exception as exc:
+                if "Bad Zip file" not in str(exc):
+                    raise EReaderConversionError(f"epub read failed: {exc}") from exc
+                last_exc = exc
+                logger.warning("EPUB read retry %s for %s: %s", attempt + 1, path, exc)
+                time.sleep(0.1 * (2**attempt))
+        if book is None:
+            raise EReaderConversionError(
+                f"epub read failed: {last_exc}. If this path is iCloud Drive, "
+                "open the books in Finder so they finish downloading, then retry"
+            )
 
-    parts: list[str] = []
-    titles = book.get_metadata("DC", "title")
-    if titles:
-        parts.append(f"# {titles[0][0]}")
-    creators = book.get_metadata("DC", "creator")
-    if creators:
-        parts.append(f"**{creators[0][0]}**")
+        parts: list[str] = []
+        titles = book.get_metadata("DC", "title")
+        if titles:
+            parts.append(f"# {titles[0][0]}")
+        creators = book.get_metadata("DC", "creator")
+        if creators:
+            parts.append(f"**{creators[0][0]}**")
 
-    chapter_num = 0
-    for item_id, _linear in book.spine:
-        item = book.get_item_with_id(item_id)
-        if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
-            continue
-        chapter_num += 1
-        html = item.get_content().decode("utf-8", errors="replace")
-        md = _html_to_markdown(html)
-        if not md:
-            continue
-        title = _extract_html_title(html) or f"Chapter {chapter_num}"
-        parts.append(f"## {title}")
-        parts.append(md)
+        chapter_num = 0
+        for item_id, _linear in book.spine:
+            item = book.get_item_with_id(item_id)
+            if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
+            chapter_num += 1
+            html = item.get_content().decode("utf-8", errors="replace")
+            md = _html_to_markdown(html)
+            if not md:
+                continue
+            title = _extract_html_title(html) or f"Chapter {chapter_num}"
+            parts.append(f"## {title}")
+            parts.append(md)
 
-    text = "\n\n".join(parts).strip()
-    if not text:
-        raise EReaderConversionError("epub: no content extracted")
-    return text
+        text = "\n\n".join(parts).strip()
+        if not text:
+            raise EReaderConversionError("epub: no content extracted")
+        return text
+    finally:
+        if local is not None:
+            local.unlink(missing_ok=True)
 
 
 def _fb2_element_text(element: ET.Element) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing as mp
 import re
 import tempfile
 import zipfile
@@ -100,6 +101,7 @@ def convert_bundle(
     path: Path,
     *,
     convert_pdf: Callable[[Path], str] | None = None,
+    convert_image: Callable[[Path], str] | None = None,
 ) -> str:
     """Convert an iWork bundle to markdown text."""
     path = path.resolve()
@@ -113,7 +115,9 @@ def convert_bundle(
     if suffix == ".key":
         return _convert_keynote(path)
     if suffix == ".pages":
-        return _convert_pages(path, convert_pdf=convert_pdf)
+        return _convert_pages(
+            path, convert_pdf=convert_pdf, convert_image=convert_image
+        )
     raise IWorkConversionError(f"unsupported iWork type: {suffix}")
 
 
@@ -156,7 +160,7 @@ def _rows_to_markdown_table(rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
-def _convert_numbers(path: Path) -> str:
+def _numbers_document_to_markdown(path: Path) -> str:
     from numbers_parser import Document
 
     doc = Document(str(path))
@@ -182,6 +186,49 @@ def _convert_numbers(path: Path) -> str:
     if not text:
         raise IWorkConversionError("numbers: no table data extracted")
     return text
+
+
+def _numbers_isolated_worker(path_str: str, queue: Any) -> None:
+    try:
+        queue.put(("ok", _numbers_document_to_markdown(Path(path_str))))
+    except Exception as exc:
+        queue.put(("err", str(exc)))
+
+
+def _numbers_document_to_markdown_isolated(path: Path) -> str:
+    ctx = mp.get_context("spawn")
+    queue: Any = ctx.Queue()
+    proc = ctx.Process(target=_numbers_isolated_worker, args=(str(path), queue))
+    proc.start()
+    proc.join(timeout=180)
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=10)
+        raise IWorkConversionError("numbers: isolated conversion timed out")
+    if queue.empty():
+        raise IWorkConversionError("numbers: isolated conversion returned no result")
+    status, payload = queue.get()
+    if status != "ok":
+        raise IWorkConversionError(payload)
+    return payload
+
+
+def _is_protobuf_pool_conflict(exc: BaseException) -> bool:
+    message = str(exc)
+    return "descriptor pool" in message or "duplicate file name" in message
+
+
+def _convert_numbers(path: Path) -> str:
+    try:
+        return _numbers_document_to_markdown(path)
+    except TypeError as exc:
+        if not _is_protobuf_pool_conflict(exc):
+            raise
+        logger.warning(
+            "numbers_parser protobuf conflict; retrying in an isolated process: %s",
+            path,
+        )
+        return _numbers_document_to_markdown_isolated(path)
 
 
 def _collect_text_from_obj(obj: Any, texts: list[str]) -> None:
@@ -309,10 +356,44 @@ def _extract_iwa_text_from_bundle(bundle: Path) -> str:
     return _sections_to_markdown(sections, heading_prefix="Section")
 
 
+_PREVIEW_IMAGE_NAMES = (
+    "preview.jpg",
+    "preview.png",
+    "preview-web.jpg",
+    "preview-web.png",
+)
+
+
+def _iter_preview_images(path: Path, dest_dir: Path) -> list[Path]:
+    """Return Pages preview images, largest/full-page first."""
+    found: list[Path] = []
+    if path.is_dir():
+        for name in _PREVIEW_IMAGE_NAMES:
+            candidate = path / name
+            if candidate.is_file():
+                found.append(candidate)
+        return found
+    if not path.is_file():
+        return found
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+            for name in _PREVIEW_IMAGE_NAMES:
+                if name not in names:
+                    continue
+                dest = dest_dir / Path(name).name
+                dest.write_bytes(zf.read(name))
+                found.append(dest)
+    except (zipfile.BadZipFile, OSError):
+        return found
+    return found
+
+
 def _convert_pages(
     path: Path,
     *,
     convert_pdf: Callable[[Path], str] | None = None,
+    convert_image: Callable[[Path], str] | None = None,
 ) -> str:
     preview: Path | None = None
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
@@ -347,6 +428,13 @@ def _convert_pages(
     iwa_text = _extract_iwa_text_from_bundle(path)
     if iwa_text:
         return iwa_text
+
+    if convert_image is not None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for preview_image in _iter_preview_images(path, Path(tmp)):
+                text = convert_image(preview_image).strip()
+                if text:
+                    return text
 
     raise IWorkConversionError(
         "pages: no preview.pdf and IWA text extraction yielded nothing"

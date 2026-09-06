@@ -8,6 +8,7 @@ import fitz
 from tqdm import tqdm
 
 from src.config import pdf_ocr_config
+from src.telemetry import span
 
 logger = logging.getLogger(__name__)
 
@@ -52,36 +53,38 @@ def extract_pages(
     max_pages = pdf_ocr_config.pdf_ocr_max_pages
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
 
-    with fitz.open(pdf_path) as doc:
-        page_count = doc.page_count
-        limit = page_count if max_pages is None else min(page_count, max_pages)
+    with span("pdf.ocr_pages"):
+        with fitz.open(pdf_path) as doc:
+            page_count = doc.page_count
+            limit = page_count if max_pages is None else min(page_count, max_pages)
 
-        page_indices = range(limit)
-        if show_progress:
-            page_indices = tqdm(
-                page_indices,
-                desc=f"PDF OCR {pdf_path.name}",
-                unit="page",
-                leave=False,
-            )
-
-        for i in page_indices:
-            page = doc[i]
-            if len(page.get_text().strip()) >= min_chars:
-                continue
-
-            page_num = i + 1
-            if not show_progress:
-                logger.info(
-                    "PDF page OCR %s/%s: %s",
-                    page_num,
-                    limit,
-                    pdf_path.name,
+            page_indices = range(limit)
+            if show_progress:
+                page_indices = tqdm(
+                    page_indices,
+                    desc=f"PDF OCR {pdf_path.name}",
+                    unit="page",
+                    leave=False,
                 )
-            png_bytes = _render_page_pixmap(doc, i)
-            text = ocr_fn(png_bytes).strip()
-            if text:
-                results.append((page_num, text))
+
+            for i in page_indices:
+                page = doc[i]
+                if len(page.get_text().strip()) >= min_chars:
+                    continue
+
+                page_num = i + 1
+                if not show_progress:
+                    logger.info(
+                        "PDF page OCR %s/%s: %s",
+                        page_num,
+                        limit,
+                        pdf_path.name,
+                    )
+                png_bytes = _render_page_pixmap(doc, i)
+                with span("pdf.page_ocr", page=page_num):
+                    text = ocr_fn(png_bytes).strip()
+                if text:
+                    results.append((page_num, text))
 
     return results
 

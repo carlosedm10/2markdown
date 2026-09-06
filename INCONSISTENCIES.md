@@ -16,7 +16,6 @@ Findings from a code audit (2026-09-06), grouped by priority. Each verified by r
 
 4. **`IWORK_USE_APP_EXPORT` is a no-op in Docker** — `convert_bundle` logs once and ignores it; AppleScript never runs in the Linux image.
 5. **No LICENSE** — public repo.
-6. **LibreOffice is not in the image** — `.doc`/`.ppt` only convert if `soffice` is already on PATH.
 
 ## Checked and clean
 
