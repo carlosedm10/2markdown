@@ -24,7 +24,7 @@ help:
 	@echo "2markdown — available targets"
 	@echo ""
 	@echo "Setup:"
-	@echo "  make fresh-setup              Copy env_template to .env and tear down stack"
+	@echo "  make fresh-setup              Copy secrets template to .env and tear down stack"
 	@echo "  make build                    Build converter image (Tesseract OCR, default)"
 	@echo "  make build ollama             Build image, start host Ollama, pull moondream"
 	@echo "  make build ollama OLLAMA_MODEL=llava   Pull a different vision model"
@@ -65,7 +65,8 @@ help:
 # ------------------------------ Docker Compose ------------------------------ #
 .PHONY: fresh-setup build up restart process down stop-ollama
 
-# Reset config and tear down stack. Run once on a new machine.
+# Reset secrets file and tear down stack. Run once on a new machine.
+# Feature flags live in src/config.py; .env is credentials only.
 fresh-setup:
 	@echo ":: fresh-setup: ."
 	cp env_template .env
@@ -81,7 +82,7 @@ build:
 	@test -f .env || (echo "Run make fresh-setup first." && exit 1)
 	docker compose build
 ifeq ($(OLLAMA),1)
-	@python3 scripts/set_ocr_mode.py ollama
+	@python3 scripts/set_ocr_mode.py ollama $(OLLAMA_MODEL)
 	@python3 scripts/ollama_host.py ensure
 	@python3 scripts/ollama_host.py pull $(OLLAMA_MODEL)
 	@echo "Ollama OCR ready ($(OLLAMA_MODEL))."
@@ -94,7 +95,7 @@ up:
 	@echo ":: up: backend"
 	@test -f .env || (echo "Run make fresh-setup && make build first." && exit 1)
 	docker compose up -d $(SERVICE)
-	@if grep -q '^LLM_ENABLED=true' .env; then \
+	@if python3 scripts/set_ocr_mode.py is-llm; then \
 		python3 scripts/ollama_host.py ensure; \
 	fi
 	@echo "Stack up (container $(SERVICE)). Convert with: make process INPUT=..."
@@ -125,11 +126,8 @@ process:
 		OUTPUT_ABS="$$WORK_DIR/$${STEM}_2markdown"; \
 	fi; \
 	mkdir -p "$$OUTPUT_ABS"; \
-	if grep -q '^LLM_ENABLED=true' .env; then \
+	if python3 scripts/set_ocr_mode.py is-llm; then \
 		python3 scripts/ollama_host.py ensure; \
-		OLLAMA_FLAG="--ollama"; \
-	else \
-		OLLAMA_FLAG=""; \
 	fi; \
 	VERBOSE_FLAG=""; \
 	if [ "$(VERBOSE)" = "1" ]; then VERBOSE_FLAG="-v"; fi; \
@@ -143,7 +141,7 @@ process:
 		$(SERVICE) uv run python -m src.cli \
 		--input "$$INPUT_ABS" \
 		--output "$$OUTPUT_ABS" \
-		$$OLLAMA_FLAG $$VERBOSE_FLAG $$DRY_RUN_FLAG $$WORKERS_FLAG
+		$$VERBOSE_FLAG $$DRY_RUN_FLAG $$WORKERS_FLAG
 
 down:
 	@echo ":: down: ."

@@ -60,10 +60,11 @@ CLI (src.cli) → paths → processor → walker (optional zip explode, magic-by
 - **Native e-readers, not only MarkItDown** — EPUB spine order and FB2/MOBI needed their own module.
 - **Ollama is not stopped by `make down`** — tearing down Docker must not kill a host daemon other tools use (`make stop-ollama` is explicit).
 - **Tesseract then vision** — hybrid OCR spends GPU only when Tesseract confidence is low.
-- **Make is still the process CLI** — `VERBOSE`, `DRY_RUN`, and `WORKERS` are Make vars forwarded into `src.cli`; extra converter knobs live in `.env`.
+- **Make is still the process CLI** — `VERBOSE`, `DRY_RUN`, and `WORKERS` are Make vars forwarded into `src.cli`; converter knobs live in `src/config.py`.
+- **Settings in code, secrets in `.env`** — flags and tuning are Pydantic `BaseModel` defaults; `Secrets` is the only `BaseSettings` class and reads `.env`.
 
 ## Where the details live
 
 - The code — `src/cli.py`, `src/batch/`, `src/converter/`, `src/agents/image_ocr.py`.
-- Product how-to — [README.md](../README.md) (setup, formats, env vars).
+- Product how-to — [README.md](../README.md) (setup, formats, `src/config.py`).
 - Agent skills — `.agents/skills/document-code`, `.agents/skills/makefile-operations`.

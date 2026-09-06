@@ -9,7 +9,7 @@ Findings from a code audit (2026-09-06), grouped by priority. Each verified by r
 ## Should fix
 
 1. **Installable package is named `src`** — `pyproject.toml` `packages = ["src"]`, so every import is `src.*` while the project/script is `twomarkdown` / `2markdown`. Confusing on PYTHONPATH and for packaging.
-2. **Kreuzberg iWork extra has no Makefile target** — `IWORK_BACKEND=kreuzberg` needs `uv sync --extra iwork-kreuzberg`, but package changes must go through `make uv-*`. There is no `make` extra-sync target, so the documented path fights the Makefile skill.
+2. **Kreuzberg iWork extra has no Makefile target** — `iwork_backend = "kreuzberg"` in `src/config.py` needs `uv sync --extra iwork-kreuzberg`, but package changes must go through `make uv-*`. There is no `make` extra-sync target, so the documented path fights the Makefile skill.
 3. **Config is process-global mutable singletons** — `conversion_config` / `llm_config` are mutated by the CLI and by `process_batch` (OCR flag restored in a `finally`). Tests and concurrent use share one object.
 
 ## Worth a look
@@ -23,4 +23,4 @@ Findings from a code audit (2026-09-06), grouped by priority. Each verified by r
 - **PDF OCR threshold** — `should_fallback(..., pdf_path=)` and `extract_pages` inspect per-page fitz text, not total markdown length (`src/converter/pdf_ocr.py`).
 - **OCR flag coherence** — `resolve_ocr_backend` treats `--ocr-backend=ollama` as LLM-on (`src/cli.py`).
 - **Manifest skip** — retries `failed`, different `ocr_backend`, and checksum mismatch (`src/batch/manifest.py`).
-- **Batch parallelism** — `PARALLEL_WORKERS` / `--workers` uses a thread pool (`src/batch/processor.py`).
+- **Batch parallelism** — `conversion_config.parallel_workers` / `--workers` uses a thread pool (`src/batch/processor.py`).

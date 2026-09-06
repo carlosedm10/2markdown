@@ -61,12 +61,12 @@ def convert(
         help="Output directory (default: <input_dir>_2markdown next to input)",
     ),
     ocr: bool = typer.Option(
-        True,
+        conversion_config.ocr_enabled,
         "--ocr/--no-ocr",
         help="Run OCR on markdown image references",
     ),
     skip_existing: bool = typer.Option(
-        True,
+        conversion_config.skip_existing,
         "--skip-existing/--force",
         help="Skip files whose output .md is newer than source",
     ),
@@ -79,26 +79,26 @@ def convert(
         ),
     ),
     ocr_backend: Literal["tesseract", "ollama"] = typer.Option(
-        "tesseract",
+        conversion_config.ocr_backend,
         "--ocr-backend",
         help="OCR engine for images and scanned PDF fallback",
     ),
     llm_enabled: bool = typer.Option(
-        False,
-        "--llm-enabled",
+        llm_config.llm_enabled,
+        "--llm-enabled/--no-llm-enabled",
         help=(
             "Enable Ollama vision for OCR (optional alias; not required when "
             "--ocr-backend=ollama)"
         ),
     ),
     pdf_ocr: bool = typer.Option(
-        True,
+        pdf_ocr_config.pdf_ocr_enabled,
         "--pdf-ocr/--no-pdf-ocr",
         help="OCR scanned PDFs when MarkItDown returns little text",
     ),
     fetch_remote_images: bool = typer.Option(
-        False,
-        "--fetch-remote-images",
+        conversion_config.fetch_remote_images,
+        "--fetch-remote-images/--no-fetch-remote-images",
         help="Fetch http(s) images referenced in markdown for OCR",
     ),
     verbose: bool = typer.Option(
@@ -120,25 +120,28 @@ def convert(
     workers: int | None = typer.Option(
         None,
         "--workers",
-        help="Parallel file conversions (default: PARALLEL_WORKERS)",
+        help=(
+            "Parallel file conversions "
+            f"(default: {conversion_config.parallel_workers})"
+        ),
     ),
     emit_chunks: bool = typer.Option(
-        False,
+        conversion_config.emit_chunks,
         "--emit-chunks/--no-emit-chunks",
         help="Write a .chunks.json sidecar next to each markdown file",
     ),
     clean: bool = typer.Option(
-        True,
+        conversion_config.clean_markdown,
         "--clean/--no-clean",
         help="Deterministic markdown cleanup (quotes, hyphenation, headers)",
     ),
     tables: bool = typer.Option(
-        True,
+        conversion_config.extract_tables,
         "--tables/--no-tables",
         help="Extract PDF/Excel tables as GitHub-flavored markdown",
     ),
     describe_figures: bool = typer.Option(
-        True,
+        conversion_config.describe_figures,
         "--describe-figures/--no-describe-figures",
         help="Describe images with little OCR text when vision LLM is enabled",
     ),

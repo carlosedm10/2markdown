@@ -17,7 +17,7 @@ make build ollama       # Ollama vision OCR — higher quality on images & scann
 make up                 # optional: keep backend container + host Ollama running
 ```
 
-`make fresh-setup` writes `.env` from the template and tears the stack down (`make down`).
+`make fresh-setup` writes a secrets-only `.env` from the template and tears the stack down (`make down`). Tuning lives in `src/config.py`.
 
 `make build` builds the converter image and locks in your OCR mode:
 
@@ -30,9 +30,9 @@ make up                 # optional: keep backend container + host Ollama running
 
 To switch OCR mode later, run the other `make build` variant again.
 
-The converter reaches host Ollama at `http://host.docker.internal:11434/v1` (set automatically in `.env`).
+The converter reaches host Ollama at `http://host.docker.internal:11434/v1` (default in `src/config.py`).
 
-**OCR flags:** `--ocr-backend=ollama` enables the vision LLM (no silent Tesseract fallback). `--ollama` is a shortcut for the same. Default Tesseract language is `eng+spa` (`TESSERACT_LANG`).
+**OCR flags:** `--ocr-backend=ollama` enables the vision LLM (no silent Tesseract fallback). `--ollama` is a shortcut for the same. Default Tesseract language is `eng+spa` (`tesseract_lang` in `src/config.py`).
 
 ## Convert
 
@@ -44,7 +44,7 @@ make process INPUT="/Users/you/Documents/reports" DRY_RUN=1  # list files, write
 make process INPUT="/Users/you/Documents/reports" WORKERS=4  # parallel files
 ```
 
-When `LLM_ENABLED=true`, `make process` ensures host Ollama is running before converting.
+When `llm_enabled` is true in `src/config.py` (`make build ollama`), `make process` ensures host Ollama is running before converting.
 
 ### What happens
 
@@ -58,8 +58,8 @@ When `LLM_ENABLED=true`, `make process` ensures host Ollama is running before co
 | `/docs/report.pdf` (file) | `/docs/report_2markdown/report.md` |
 
 4. A manifest at `<output>/.2markdown-manifest.json` records `ok`, `failed`, and `skipped` per file (including OCR backend).
-5. Skip logic respects OCR backend: failed files are retried; switching Tesseract → Ollama re-converts. Use `SKIP_EXISTING=false` to force re-convert everything.
-6. `.md` source files are not reconverted unless `CONVERT_EXISTING_MD=true`.
+5. Skip logic respects OCR backend: failed files are retried; switching Tesseract → Ollama re-converts. Pass `--force` to the CLI, or set `skip_existing = False` in `src/config.py`, to re-convert everything.
+6. `.md` source files are not reconverted unless `convert_existing_md = True` in `src/config.py`.
 
 ### Examples
 
@@ -87,7 +87,7 @@ MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, 
 | `.xlsx` | Native sheets as `## Sheet:` + GFM tables |
 | `.doc`, `.ppt` | LibreOffice/`soffice` if on PATH (not in the default image) |
 
-Plain `.zip` archives are unpacked into the output tree and converted (Office/iWork zips are left intact). File type can be sniffed from magic bytes (`SNIFF_FILETYPE=true`).
+Plain `.zip` archives are unpacked into the output tree and converted (Office/iWork zips are left intact). File type can be sniffed from magic bytes (`sniff_filetype` in `src/config.py`).
 
 **Apple iWork** (directory bundles or zip archives on disk):
 
@@ -103,7 +103,7 @@ Optional **Kreuzberg** backend for stronger Pages coverage (Elastic-2.0 license)
 
 Kreuzberg is an optional extra (`iwork-kreuzberg`) and is **not** in the default image. There is no `make` target for extras yet (see `INCONSISTENCIES.md`).
 
-Set `IWORK_BACKEND=kreuzberg` in `.env`.
+Set `iwork_backend = "kreuzberg"` in `src/config.py`.
 
 `.doc`/`.ppt` convert via LibreOffice when `soffice` is on PATH; otherwise that file fails and the batch continues. Video files still soft-fail.
 
@@ -115,44 +115,46 @@ Set `IWORK_BACKEND=kreuzberg` in `.env`.
 
 ## Scanned PDFs
 
-OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has fewer than `PDF_OCR_MIN_CHARS` characters, that page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Mixed PDFs (digital text + scans) OCR only the weak pages. Output uses `## Page N` with an `### OCR` subsection for scanned pages (prose, not fenced code). Tables are extracted when possible (`### Table (page N)`).
+OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has fewer than `pdf_ocr_min_chars` characters, that page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Mixed PDFs (digital text + scans) OCR only the weak pages. Output uses `## Page N` with an `### OCR` subsection for scanned pages (prose, not fenced code). Tables are extracted when possible (`### Table (page N)`).
 
-If Tesseract confidence is below `OCR_CONFIDENCE_MIN` and Ollama is enabled, 2markdown retries that image with the vision model (`OCR_HYBRID=true`).
+If Tesseract confidence is below `ocr_confidence_min` and Ollama is enabled, 2markdown retries that image with the vision model (`ocr_hybrid`).
 
-**Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` and set `OLLAMA_VISION_MODEL=ollama:llama3.2-vision:11b` in `.env`.
+**Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` (that also updates `OLLAMA_VISION_MODEL` in `src/config.py`).
 
 ## Configuration
 
-`.env` is managed by `make fresh-setup` and `make build`. Advanced tuning:
+Feature flags and tuning live in [`src/config.py`](src/config.py). `.env` is secrets only (`make fresh-setup` copies `env_template`). `make build` / `make build ollama` rewrites the OCR-mode constants at the top of `src/config.py`.
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `SKIP_EXISTING` | `true` | Skip if output `.md` is newer than source |
-| `CONVERT_EXISTING_MD` | `false` | Reconvert `.md` sources in the input tree |
-| `TESSERACT_LANG` | `eng+spa` | Tesseract language(s) for OCR |
-| `CLEAN_MARKDOWN` | `true` | Fix mojibake, hyphenation, repeated headers |
-| `EXTRACT_TABLES` | `true` | PDF/Excel tables as GitHub-flavored markdown |
-| `OCR_HYBRID` | `true` | Fall back to Ollama when Tesseract confidence is low |
-| `OCR_CONFIDENCE_MIN` | `60` | Minimum Tesseract mean confidence (0–100) |
-| `DESCRIBE_FIGURES` | `true` | Caption images with little OCR text (needs Ollama) |
-| `EXTRACT_ASSETS` | `true` | Dump PDF embeds next to the `.md` |
-| `EMIT_CHUNKS` | `false` | Write `.chunks.json` sidecar (heading-aware) |
-| `PARALLEL_WORKERS` | `1` | Parallel file conversions |
-| `FILE_TIMEOUT_SEC` | `300` | Per-file timeout |
-| `EXPLODE_ZIP` | `true` | Unpack generic zips before converting |
-| `SNIFF_FILETYPE` | `true` | Prefer magic bytes over a lying extension |
-| `PDF_OCR_MIN_CHARS` | `50` | Per-page threshold for scanned-PDF fallback |
-| `PDF_OCR_DPI` | `200` | Rasterization quality for page OCR |
-| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` | Host Ollama API (Docker → host) |
-| `OLLAMA_VISION_MODEL` | `ollama:moondream` | Vision model (set by `make build ollama`; override e.g. `ollama:llava` if you have more RAM) |
-| `IWORK_ENABLED` | `true` | Convert `.pages` / `.key` / `.numbers` bundles |
-| `IWORK_BACKEND` | `native` | `native` or `kreuzberg` (optional extra) |
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `skip_existing` | `true` | Skip if output `.md` is newer than source |
+| `convert_existing_md` | `false` | Reconvert `.md` sources in the input tree |
+| `tesseract_lang` | `eng+spa` | Tesseract language(s) for OCR |
+| `clean_markdown` | `true` | Fix mojibake, hyphenation, repeated headers |
+| `extract_tables` | `true` | PDF/Excel tables as GitHub-flavored markdown |
+| `ocr_hybrid` | `true` | Fall back to Ollama when Tesseract confidence is low |
+| `ocr_confidence_min` | `60` | Minimum Tesseract mean confidence (0–100) |
+| `describe_figures` | `true` | Caption images with little OCR text (needs Ollama) |
+| `extract_assets` | `true` | Dump PDF embeds next to the `.md` |
+| `emit_chunks` | `false` | Write `.chunks.json` sidecar (heading-aware) |
+| `parallel_workers` | `1` | Parallel file conversions |
+| `file_timeout_sec` | `300` | Per-file timeout |
+| `explode_zip` | `true` | Unpack generic zips before converting |
+| `sniff_filetype` | `true` | Prefer magic bytes over a lying extension |
+| `pdf_ocr_min_chars` | `50` | Per-page threshold for scanned-PDF fallback |
+| `pdf_ocr_dpi` | `200` | Rasterization quality for page OCR |
+| `ollama_base_url` | `http://host.docker.internal:11434/v1` | Host Ollama API (Docker → host) |
+| `ollama_vision_model` | `ollama:moondream` | Vision model (`make build ollama OLLAMA_MODEL=…`) |
+| `iwork_enabled` | `true` | Convert `.pages` / `.key` / `.numbers` bundles |
+| `iwork_backend` | `native` | `native` or `kreuzberg` (optional extra) |
+
+Credentials belong in `.env` and are loaded by `Secrets` in `src/config.py` (empty until a feature needs a key).
 
 ## Makefile reference
 
 | Target | Description |
 |--------|-------------|
-| `fresh-setup` | Create/reset `.env`, `make down` |
+| `fresh-setup` | Create/reset secrets `.env`, `make down` |
 | `build` | Build image + enable Tesseract OCR |
 | `build ollama` | Build image + ensure host Ollama + pull vision model |
 | `up` | Start backend container (+ host Ollama if LLM enabled) |
@@ -182,6 +184,6 @@ GitHub Actions calls `make lint` and `make test` (`CI=true` → native `uv`). Op
 
 ## Notes
 
-- Remote image URLs are not fetched unless `FETCH_REMOTE_IMAGES=true` in `.env`
+- Remote image URLs are not fetched unless `fetch_remote_images` is true in `src/config.py` (or `--fetch-remote-images`)
 - Audio transcription may call external services via MarkItDown extras
 - Only local paths are processed — no URL or YouTube ingestion
