@@ -81,6 +81,11 @@ MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, 
 | `.epub` | Spine order, title/author metadata |
 | `.fb2` | FictionBook sections and paragraphs |
 | `.mobi`, `.azw`, `.azw3` | Unpacked HTML → markdown chapters |
+| `.eml` | Native RFC 822 (From/To/Subject + body) |
+| `.xlsx` | Native sheets as `## Sheet:` + GFM tables |
+| `.doc`, `.ppt` | LibreOffice/`soffice` if installed on the converter image |
+
+Plain `.zip` archives are unpacked into the output tree and converted (Office/iWork zips are left intact). File type can be sniffed from magic bytes (`SNIFF_FILETYPE=true`).
 
 **Apple iWork** (directory bundles or zip archives on disk):
 
@@ -108,7 +113,9 @@ Legacy `.doc`/`.ppt` and video files soft-fail with a warning; the batch continu
 
 ## Scanned PDFs
 
-OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has fewer than `PDF_OCR_MIN_CHARS` characters, that page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Mixed PDFs (digital text + scans) OCR only the weak pages. Output still uses `## Page N — OCR` for those pages.
+OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has fewer than `PDF_OCR_MIN_CHARS` characters, that page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Mixed PDFs (digital text + scans) OCR only the weak pages. Output uses `## Page N` with an `### OCR` subsection for scanned pages (prose, not fenced code). Tables are extracted when possible (`### Table (page N)`).
+
+If Tesseract confidence is below `OCR_CONFIDENCE_MIN` and Ollama is enabled, 2markdown retries that image with the vision model (`OCR_HYBRID=true`).
 
 **Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` and set `OLLAMA_VISION_MODEL=ollama:llama3.2-vision:11b` in `.env`.
 
@@ -121,6 +128,17 @@ OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has 
 | `SKIP_EXISTING` | `true` | Skip if output `.md` is newer than source |
 | `CONVERT_EXISTING_MD` | `false` | Reconvert `.md` sources in the input tree |
 | `TESSERACT_LANG` | `eng+spa` | Tesseract language(s) for OCR |
+| `CLEAN_MARKDOWN` | `true` | Fix mojibake, hyphenation, repeated headers |
+| `EXTRACT_TABLES` | `true` | PDF/Excel tables as GitHub-flavored markdown |
+| `OCR_HYBRID` | `true` | Fall back to Ollama when Tesseract confidence is low |
+| `OCR_CONFIDENCE_MIN` | `60` | Minimum Tesseract mean confidence (0–100) |
+| `DESCRIBE_FIGURES` | `true` | Caption images with little OCR text (needs Ollama) |
+| `EXTRACT_ASSETS` | `true` | Dump PDF embeds next to the `.md` |
+| `EMIT_CHUNKS` | `false` | Write `.chunks.json` sidecar (heading-aware) |
+| `PARALLEL_WORKERS` | `1` | Parallel file conversions |
+| `FILE_TIMEOUT_SEC` | `300` | Per-file timeout |
+| `EXPLODE_ZIP` | `true` | Unpack generic zips before converting |
+| `SNIFF_FILETYPE` | `true` | Prefer magic bytes over a lying extension |
 | `PDF_OCR_MIN_CHARS` | `50` | Per-page threshold for scanned-PDF fallback |
 | `PDF_OCR_DPI` | `200` | Rasterization quality for page OCR |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` | Host Ollama API (Docker → host) |

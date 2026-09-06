@@ -81,10 +81,7 @@ class TestStripRepeatedRunningHeaders:
 
     def test_strip_repeated_running_headers_keeps_two_page_repeats(self) -> None:
         header = "Short Header"
-        raw = (
-            f"## Page 1\n{header}\nAlpha\n\n"
-            f"## Page 2\n{header}\nBeta"
-        )
+        raw = f"## Page 1\n{header}\nAlpha\n\n## Page 2\n{header}\nBeta"
         result = strip_repeated_running_headers(raw)
         assert result.count(header) == 2
 

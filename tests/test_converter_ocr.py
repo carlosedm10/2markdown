@@ -10,6 +10,7 @@ from src.converter.ocr import (
     enrich_markdown_images,
     is_raster_image,
     markdown_has_usable_text,
+    ocr_image_bytes,
 )
 
 
@@ -112,8 +113,9 @@ class TestMarkdownImageOcr:
         enriched = enrich_markdown_images(markdown, source, ocr_fn=fake_ocr)
 
         assert "![diagram](diagram.png)" in enriched
-        assert "### [OCR generated text]" in enriched
+        assert "### [OCR]" in enriched
         assert "OCR TEXT" in enriched
+        assert "```" not in enriched
 
     def test_enrich_leaves_markdown_unchanged_when_ocr_returns_empty(
         self, tmp_path: Path, minimal_png_bytes: bytes
@@ -179,3 +181,37 @@ class TestFetchRemoteImage:
         mock_get.assert_called_once_with(
             "https://example.com/img.png", timeout=20, stream=True
         )
+
+
+class TestHybridOcr:
+    def test_ocr_image_bytes_uses_llm_when_tesseract_confidence_low(self) -> None:
+        def llm(_: bytes) -> str:
+            return "from-llm"
+
+        with patch("src.converter.ocr.conversion_config.ocr_hybrid", True):
+            with patch("src.converter.ocr.conversion_config.ocr_confidence_min", 60.0):
+                with patch(
+                    "src.converter.ocr.tesseract_ocr_with_confidence",
+                    return_value=("weak", 12.0),
+                ):
+                    with patch(
+                        "src.converter.ocr.is_tiny_image",
+                        return_value=False,
+                    ):
+                        assert ocr_image_bytes(b"img", ocr_fn=llm) == "from-llm"
+
+    def test_ocr_image_bytes_keeps_tesseract_when_confidence_high(self) -> None:
+        def llm(_: bytes) -> str:
+            raise AssertionError("LLM should not run")
+
+        with patch("src.converter.ocr.conversion_config.ocr_hybrid", True):
+            with patch("src.converter.ocr.conversion_config.ocr_confidence_min", 60.0):
+                with patch(
+                    "src.converter.ocr.tesseract_ocr_with_confidence",
+                    return_value=("sharp text", 90.0),
+                ):
+                    with patch(
+                        "src.converter.ocr.is_tiny_image",
+                        return_value=False,
+                    ):
+                        assert ocr_image_bytes(b"img", ocr_fn=llm) == "sharp text"

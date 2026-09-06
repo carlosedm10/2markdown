@@ -35,9 +35,7 @@ def is_iwork_bundle(path: Path) -> bool:
 def _warn_app_export_once() -> None:
     global _app_export_warned
     if iwork_config.iwork_use_app_export and not _app_export_warned:
-        logger.warning(
-            "IWORK_USE_APP_EXPORT is not supported in Docker; ignoring"
-        )
+        logger.warning("IWORK_USE_APP_EXPORT is not supported in Docker; ignoring")
         _app_export_warned = True
 
 

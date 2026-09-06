@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import fitz
-import pytest
 from PIL import Image
 
 from src.converter import assets, iwork
@@ -151,7 +150,10 @@ class TestIWorkBundleImages:
         warning_messages = [
             str(call.args[0]) for call in mock_logger.warning.call_args_list
         ]
-        assert sum(
-            "IWORK_USE_APP_EXPORT is not supported in Docker" in msg
-            for msg in warning_messages
-        ) == 1
+        assert (
+            sum(
+                "IWORK_USE_APP_EXPORT is not supported in Docker" in msg
+                for msg in warning_messages
+            )
+            == 1
+        )

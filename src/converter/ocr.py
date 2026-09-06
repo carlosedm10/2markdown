@@ -104,18 +104,93 @@ def _fetch_remote_image(url: str) -> bytes | None:
         return None
 
 
+def is_tiny_image(image_bytes: bytes, min_px: int | None = None) -> bool:
+    threshold = conversion_config.min_image_px if min_px is None else min_px
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            width, height = img.size
+        return width < threshold and height < threshold
+    except Exception:
+        return False
+
+
+def tesseract_ocr_with_confidence(image_bytes: bytes) -> tuple[str, float]:
+    """Return (text, mean word confidence 0-100)."""
+    if shutil.which("tesseract") is None:
+        return "", 0.0
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode not in ("L", "RGB"):
+                img = img.convert("RGB")
+            grayscale = ImageOps.grayscale(img)
+            lang = conversion_config.tesseract_lang
+            data = pytesseract.image_to_data(
+                grayscale, lang=lang, output_type=pytesseract.Output.DICT
+            )
+        confs = [
+            float(c)
+            for c in data.get("conf", [])
+            if str(c) not in {"", "-1"} and float(c) >= 0
+        ]
+        words = [
+            t
+            for t, c in zip(data.get("text", []), data.get("conf", []), strict=False)
+            if str(t).strip() and str(c) not in {"", "-1"}
+        ]
+        text = " ".join(words).strip()
+        if not text:
+            text = extract_text_with_tesseract(image_bytes)
+        mean = sum(confs) / len(confs) if confs else 0.0
+        return text, mean
+    except Exception as exc:
+        logger.warning("Tesseract confidence OCR error: %s", exc)
+        return "", 0.0
+
+
 def ocr_image_bytes(
     image_bytes: bytes,
     *,
     ocr_fn: Callable[[bytes], str] | None = None,
 ) -> str:
+    if is_tiny_image(image_bytes) and ocr_fn is None:
+        return ""
+
+    use_hybrid = conversion_config.ocr_hybrid
+    llm_fn = ocr_fn
+    if llm_fn is extract_text_with_tesseract:
+        llm_fn = None
+
+    if use_hybrid:
+        text, conf = tesseract_ocr_with_confidence(image_bytes)
+        if text and conf >= conversion_config.ocr_confidence_min:
+            return text
+        if llm_fn is not None:
+            return llm_fn(image_bytes).strip()
+        return text
+
     if ocr_fn is not None:
         return ocr_fn(image_bytes).strip()
     return extract_text_with_tesseract(image_bytes)
 
 
+def describe_image_bytes(image_bytes: bytes) -> str:
+    if not conversion_config.describe_figures:
+        return ""
+    try:
+        from src.agents.image_ocr import describe_image_bytes_llm
+        from src.config import llm_config
+
+        if not llm_config.llm_enabled:
+            return ""
+        return describe_image_bytes_llm(image_bytes).strip()
+    except Exception as exc:
+        logger.debug("Figure description skipped: %s", exc)
+        return ""
+
+
 def _format_ocr_block(text: str) -> str:
-    return f"\n### [OCR generated text]\n\n```\n{text}\n```\n"
+    return f"\n### [OCR]\n\n{text}\n"
 
 
 def convert_image_file(
@@ -134,7 +209,7 @@ def convert_image_file(
     if not ocr_text:
         return existing_markdown
 
-    return f"## {path.name} — OCR\n\n```\n{ocr_text}\n```"
+    return f"## {path.name} — OCR\n\n{ocr_text}"
 
 
 def enrich_markdown_images(
@@ -164,6 +239,9 @@ def enrich_markdown_images(
         ocr_text = ocr_image_bytes(image_bytes, ocr_fn=ocr_fn)
         if ocr_text:
             return match.group(0) + _format_ocr_block(ocr_text)
+        caption = describe_image_bytes(image_bytes)
+        if caption:
+            return match.group(0) + f"\n### [Figure]\n\n{caption}\n"
         return match.group(0)
 
     return IMAGE_PATTERN.sub(_replace, markdown_content)

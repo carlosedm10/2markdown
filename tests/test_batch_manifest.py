@@ -71,6 +71,9 @@ class TestManifest:
             "error": None,
             "output": str(output.resolve()),
             "ocr_backend": None,
+            "checksum": None,
+            "duration_ms": None,
+            "char_count": None,
         }
 
         assert key in payload["files"]
@@ -107,9 +110,7 @@ class TestManifest:
         output_md.write_text("# ok")
 
         manifest = Manifest(tmp_path / ".2markdown-manifest.json")
-        manifest.record(
-            source, status="ok", output=output_md, ocr_backend="tesseract"
-        )
+        manifest.record(source, status="ok", output=output_md, ocr_backend="tesseract")
 
         assert (
             manifest.should_skip(
@@ -126,9 +127,7 @@ class TestManifest:
         output_md.write_text("# ok")
 
         manifest = Manifest(tmp_path / ".2markdown-manifest.json")
-        manifest.record(
-            source, status="ok", output=output_md, ocr_backend="tesseract"
-        )
+        manifest.record(source, status="ok", output=output_md, ocr_backend="tesseract")
 
         assert (
             manifest.should_skip(
@@ -145,9 +144,7 @@ class TestManifest:
         output = tmp_path / "a.md"
 
         manifest = Manifest(manifest_path)
-        manifest.record(
-            source, status="ok", output=output, ocr_backend="tesseract"
-        )
+        manifest.record(source, status="ok", output=output, ocr_backend="tesseract")
         manifest.save()
 
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -156,6 +153,33 @@ class TestManifest:
 
         reloaded = Manifest(manifest_path)
         assert reloaded.records[key].ocr_backend == "tesseract"
+
+    def test_should_not_skip_when_checksum_changed(self, tmp_path: Path) -> None:
+        """should_skip() — False when stored checksum differs from current."""
+        source = tmp_path / "doc.pdf"
+        output_md = tmp_path / "doc.md"
+        source.write_bytes(b"%PDF-1.4 old")
+        output_md.write_text("# ok")
+
+        manifest = Manifest(tmp_path / ".2markdown-manifest.json")
+        manifest.record(
+            source,
+            status="ok",
+            output=output_md,
+            ocr_backend="tesseract",
+            checksum="abc",
+        )
+
+        assert (
+            manifest.should_skip(
+                source,
+                output_md,
+                skip_existing=True,
+                ocr_backend="tesseract",
+                checksum="def",
+            )
+            is False
+        )
 
     def test_load_old_json_without_ocr_backend(self, tmp_path: Path) -> None:
         """_load() — tolerates JSON records missing ocr_backend."""

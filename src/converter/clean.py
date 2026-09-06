@@ -46,9 +46,7 @@ _WINDOWS_QUOTE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
 _DEHYPHENATE_RE = re.compile(r"([A-Za-z])-\n([A-Za-z])")
 
 _PAGE_SECTION_SPLIT_RE = re.compile(r"(?=^## Page\b)", flags=re.MULTILINE)
-_PAGE_NUMBER_LINE_RE = re.compile(
-    r"^(?:Page \d+ of \d+|- \d+ -|\d+/\d+)$"
-)
+_PAGE_NUMBER_LINE_RE = re.compile(r"^(?:Page \d+ of \d+|- \d+ -|\d+/\d+)$")
 
 
 def replace_unicode_mojibake(text: str) -> str:

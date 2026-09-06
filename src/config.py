@@ -32,6 +32,9 @@ DEFAULT_INCLUDE_EXTENSIONS = frozenset(
         ".mp3",
         ".zip",
         ".msg",
+        ".eml",
+        ".doc",
+        ".ppt",
         ".pages",
         ".key",
         ".numbers",
@@ -60,6 +63,20 @@ class ConversionConfig(BaseSettings):
     include_extensions: frozenset[str] = DEFAULT_INCLUDE_EXTENSIONS
     convert_existing_md: bool = False
     tesseract_lang: str = "eng+spa"
+    clean_markdown: bool = True
+    extract_tables: bool = True
+    describe_figures: bool = True
+    extract_assets: bool = True
+    min_image_px: int = 64
+    ocr_hybrid: bool = True
+    ocr_confidence_min: float = 60.0
+    emit_chunks: bool = False
+    chunk_max_chars: int = 1500
+    chunk_overlap: int = 100
+    parallel_workers: int = 1
+    file_timeout_sec: float | None = 300.0
+    explode_zip: bool = True
+    sniff_filetype: bool = True
 
 
 class PdfOcrConfig(BaseSettings):

@@ -187,4 +187,3 @@ def _convert_mobi(path: Path) -> str:
     finally:
         if tempdir is not None:
             shutil.rmtree(tempdir, ignore_errors=True)
-

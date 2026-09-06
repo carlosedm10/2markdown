@@ -93,7 +93,9 @@ def markdown_asset_index(
 
     root = output_root.resolve()
     lines = ["## Embedded images", ""]
-    for asset_path, page_number in sorted(assets, key=lambda item: (item[1], str(item[0]))):
+    for asset_path, page_number in sorted(
+        assets, key=lambda item: (item[1], str(item[0]))
+    ):
         try:
             rel = asset_path.resolve().relative_to(root).as_posix()
         except ValueError:

@@ -21,7 +21,7 @@ def _write_sample_eml(path: Path) -> None:
         "\r\n"
         "--boundary42\r\n"
         "Content-Type: application/octet-stream\r\n"
-        "Content-Disposition: attachment; filename=\"notes.txt\"\r\n"
+        'Content-Disposition: attachment; filename="notes.txt"\r\n'
         "\r\n"
         "binary data\r\n"
         "\r\n"

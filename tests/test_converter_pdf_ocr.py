@@ -88,8 +88,8 @@ class TestPdfOcrFallback:
 
         merged = pdf_ocr.merge("Digital layer from MarkItDown", pages)
         assert "Digital layer from MarkItDown" in merged
-        assert "Scanned pages (OCR fallback)" in merged
         assert "OCR-P2" in merged
+        assert "Scanned pages" not in merged
 
     def test_extract_pages_skips_fully_digital_pdf(self, tmp_path: Path) -> None:
         """extract_pages() — no OCR when every page has enough native text."""
@@ -121,12 +121,14 @@ class TestPdfOcrFallback:
 
         expected_fragments = [
             "Existing text",
-            "Scanned pages (OCR fallback)",
-            "## Page 1 — OCR",
+            "## Page 1",
+            "### OCR",
             "Page one",
         ]
         for fragment in expected_fragments:
             assert fragment in merged
+        assert "```" not in merged
+        assert "Scanned pages" not in merged
 
     def test_merge_returns_only_ocr_when_markitdown_text_empty(self) -> None:
         """merge() — OCR-only output when MarkItDown returned no text."""
@@ -134,3 +136,21 @@ class TestPdfOcrFallback:
 
         assert "Only OCR" in merged
         assert "Scanned pages" not in merged
+        assert "```" not in merged
+
+    def test_compose_pdf_markdown_interleaves_native_and_ocr(
+        self, tmp_path: Path
+    ) -> None:
+        mixed = _make_pdf(tmp_path / "mixed.pdf", [LONG_TEXT, ""])
+        composed = pdf_ocr.compose_pdf_markdown(
+            pdf_path=mixed,
+            markitdown_text="unused-short",
+            ocr_pages=[(2, "SCANNED")],
+            tables=[],
+        )
+        assert "## Page 1" in composed
+        assert LONG_TEXT in composed
+        assert "## Page 2" in composed
+        assert "### OCR" in composed
+        assert "SCANNED" in composed
+        assert "```" not in composed
