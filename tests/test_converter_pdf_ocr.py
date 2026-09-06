@@ -88,7 +88,10 @@ class TestPdfOcrFallback:
 
         merged = pdf_ocr.merge("Digital layer from MarkItDown", pages)
         assert "Digital layer from MarkItDown" in merged
-        assert "Scanned pages (OCR fallback)" in merged
+        assert "Scanned pages (OCR fallback)" not in merged
+        assert "```" not in merged
+        assert "## Page 2" in merged
+        assert "### OCR" in merged
         assert "OCR-P2" in merged
 
     def test_extract_pages_skips_fully_digital_pdf(self, tmp_path: Path) -> None:
@@ -116,21 +119,51 @@ class TestPdfOcrFallback:
     # -------------------------------------------------------------------------
 
     def test_merge_prepends_existing_text_and_adds_ocr_sections(self) -> None:
-        """merge() — keeps MarkItDown text and appends Scanned pages (OCR fallback)."""
+        """merge() — keeps MarkItDown text and interleaves page OCR sections."""
         merged = pdf_ocr.merge("Existing text", [(1, "Page one")])
 
         expected_fragments = [
             "Existing text",
-            "Scanned pages (OCR fallback)",
-            "## Page 1 — OCR",
+            "## Page 1",
+            "### OCR",
             "Page one",
         ]
         for fragment in expected_fragments:
             assert fragment in merged
+        assert "Scanned pages (OCR fallback)" not in merged
+        assert "```" not in merged
 
     def test_merge_returns_only_ocr_when_markitdown_text_empty(self) -> None:
         """merge() — OCR-only output when MarkItDown returned no text."""
         merged = pdf_ocr.merge("", [(1, "Only OCR")])
 
         assert "Only OCR" in merged
+        assert "## Page 1" in merged
+        assert "### OCR" in merged
         assert "Scanned pages" not in merged
+        assert "```" not in merged
+
+    # -------------------------------------------------------------------------
+    # compose_pdf_markdown
+    # -------------------------------------------------------------------------
+
+    def test_compose_pdf_markdown_interleaves_native_ocr_and_tables(
+        self, tmp_path: Path
+    ) -> None:
+        """compose_pdf_markdown() — per-page native text, OCR, and tables."""
+        pdf_path = _make_pdf(tmp_path / "composed.pdf", [LONG_TEXT, ""])
+        table_md = "### Table (page 1)\n\n| A | B |\n| --- | --- |"
+        result = pdf_ocr.compose_pdf_markdown(
+            pdf_path=pdf_path,
+            markitdown_text=LONG_TEXT,
+            ocr_pages=[(2, "Scanned page two")],
+            tables=[(1, table_md)],
+        )
+
+        assert "## Page 1" in result
+        assert LONG_TEXT in result
+        assert table_md in result
+        assert "## Page 2" in result
+        assert "### OCR" in result
+        assert "Scanned page two" in result
+        assert "```" not in result

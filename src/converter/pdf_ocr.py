@@ -86,18 +86,109 @@ def extract_pages(
     return results
 
 
-def _format_page_sections(pages: list[tuple[int, str]]) -> str:
-    blocks: list[str] = []
-    for page_num, text in pages:
-        blocks.append(f"## Page {page_num} — OCR\n\n```\n{text}\n```")
-    return "\n\n".join(blocks)
+def _page_native_text(page: fitz.Page) -> str:
+    try:
+        blocks = page.get_text("blocks")
+        if blocks:
+            sorted_blocks = sorted(blocks, key=lambda block: (block[1], block[0]))
+            parts = [block[4].strip() for block in sorted_blocks if block[4].strip()]
+            if parts:
+                return "\n".join(parts)
+    except Exception:
+        logger.debug("Block-based text extraction failed; using default get_text()")
+    return page.get_text().strip()
 
 
-def merge(markdown: str, pages: list[tuple[int, str]]) -> str:
+def _group_by_page(items: list[tuple[int, str]]) -> dict[int, list[str]]:
+    grouped: dict[int, list[str]] = {}
+    for page_num, content in items:
+        grouped.setdefault(page_num, []).append(content)
+    return grouped
+
+
+def _should_append_markitdown(markitdown_text: str, native_concat: str) -> bool:
+    markitdown = (markitdown_text or "").strip()
+    native = native_concat.strip()
+    if not markitdown:
+        return False
+    if markitdown == native:
+        return False
+    if markitdown in native:
+        return False
+    if len(markitdown) > 1.2 * len(native):
+        return True
+    return markitdown != native
+
+
+def compose_pdf_markdown(
+    *,
+    pdf_path: Path,
+    markitdown_text: str,
+    ocr_pages: list[tuple[int, str]],
+    tables: list[tuple[int, str]] | None = None,
+) -> str:
+    """Build interleaved page markdown from native text, OCR, and tables."""
+    min_chars = pdf_ocr_config.pdf_ocr_min_chars
+    ocr_by_page = _group_by_page(ocr_pages)
+    tables_by_page = _group_by_page(tables or [])
+
+    page_sections: list[str] = []
+    native_parts: list[str] = []
+
+    with fitz.open(pdf_path) as doc:
+        for page_index, page in enumerate(doc):
+            page_num = page_index + 1
+            section_parts = [f"## Page {page_num}"]
+
+            native_text = _page_native_text(page)
+            if len(native_text) >= min_chars:
+                section_parts.append(native_text)
+                native_parts.append(native_text)
+
+            if page_num in ocr_by_page:
+                for ocr_text in ocr_by_page[page_num]:
+                    section_parts.append(f"### OCR\n\n{ocr_text}")
+
+            if page_num in tables_by_page:
+                section_parts.extend(tables_by_page[page_num])
+
+            page_sections.append("\n\n".join(section_parts))
+
+    result = "\n\n".join(page_sections)
+    native_concat = "\n\n".join(native_parts)
+    if _should_append_markitdown(markitdown_text, native_concat):
+        markitdown = (markitdown_text or "").strip()
+        suffix = f"## Document (MarkItDown)\n\n{markitdown}"
+        if result:
+            return f"{result}\n\n{suffix}"
+        return suffix
+    return result
+
+
+def merge(
+    markdown: str,
+    pages: list[tuple[int, str]],
+    *,
+    pdf_path: Path | None = None,
+    tables: list[tuple[int, str]] | None = None,
+) -> str:
+    if pdf_path is not None:
+        return compose_pdf_markdown(
+            pdf_path=pdf_path,
+            markitdown_text=markdown,
+            ocr_pages=pages,
+            tables=tables,
+        )
+
     if not pages:
         return markdown
-    ocr_section = _format_page_sections(pages)
+
+    page_sections: list[str] = []
+    for page_num, text in pages:
+        page_sections.append(f"## Page {page_num}\n\n### OCR\n\n{text}")
+
+    ocr_block = "\n\n".join(page_sections)
     base = (markdown or "").strip()
     if base:
-        return f"{base}\n\n## Scanned pages (OCR fallback)\n\n{ocr_section}"
-    return ocr_section
+        return f"{base}\n\n{ocr_block}"
+    return ocr_block
