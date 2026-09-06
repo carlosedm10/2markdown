@@ -1,0 +1,21 @@
+---
+description: Install, remove, and lock Python packages only via Makefile
+alwaysApply: true
+---
+
+# Package management
+
+Never run `uv add`, `uv remove`, `uv lock`, or `uv sync` on the host.
+
+All dependency changes go through Docker via the Makefile:
+
+```bash
+make uv-add PKG="package>=1.0"
+make uv-remove PKG=package
+make uv-lock
+make uv-lock-regenerate
+make uv-update
+make uv-update PKG=foo
+```
+
+Do not hand-edit `pyproject.toml` / `uv.lock` to add or drop dependencies. Tests and lint also run in Docker: `make tests`, `make lint`, `make format`.

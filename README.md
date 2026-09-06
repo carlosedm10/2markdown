@@ -146,7 +146,16 @@ OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has 
 
 ## Development
 
-Maintainer targets (`lint`, `format`, `tests`, `uv-add`, …) all run inside Docker. See the `Makefile`.
+Maintainer targets all run **inside Docker**. Do not run `uv add` / `uv lock` on the host.
+
+| Target | Description |
+|--------|-------------|
+| `make uv-add PKG="pkg>=1.0"` | Add a dependency and refresh `uv.lock` |
+| `make uv-remove PKG=pkg` | Remove a dependency |
+| `make uv-lock` | Refresh `uv.lock` |
+| `make uv-lock-regenerate` | Regenerate the lock file from scratch |
+| `make uv-update` / `make uv-update PKG=foo` | Upgrade all packages, or one |
+| `make lint` / `make format` / `make tests` | Ruff and unit tests |
 
 GitHub Actions runs **ruff** and unit tests on every push/PR. An optional integration job (Tesseract + `pytest -m integration`) also runs but is non-blocking (`continue-on-error`).
 
