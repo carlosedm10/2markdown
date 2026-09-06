@@ -35,3 +35,12 @@ class TestSetOcrMode:
         assert 'OCR_BACKEND: Literal["tesseract", "ollama"] = "tesseract"' in text
         assert "LLM_ENABLED = False" in text
         assert llm_enabled(text) is False
+
+    def test_repo_config_py_matches_rewrite_patterns(self) -> None:
+        config = Path(__file__).resolve().parents[1] / "src" / "config.py"
+        text = config.read_text(encoding="utf-8")
+        ollama = apply_mode(text, "ollama", vision_model="llava")
+        assert llm_enabled(ollama) is True
+        restored = apply_mode(ollama, "tesseract")
+        assert llm_enabled(restored) is False
+        assert 'OCR_BACKEND: Literal["tesseract", "ollama"] = "tesseract"' in restored
