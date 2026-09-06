@@ -202,15 +202,15 @@ logs:
 
 format:
 	@echo ":: format: backend"
-	$(call run_uv,run --extra dev ruff format src/ tests/)
+	$(call run_uv,run --extra dev ruff format src/ twomarkdown/ tests/)
 
 lint-fix:
 	@echo ":: lint-fix: backend"
-	$(call run_uv,run --extra dev ruff check --fix src/ tests/)
+	$(call run_uv,run --extra dev ruff check --fix src/ twomarkdown/ tests/)
 
 lint:
 	@echo ":: lint: backend"
-	$(call run_uv,run --extra dev ruff check src/ tests/)
+	$(call run_uv,run --extra dev ruff check src/ twomarkdown/ tests/)
 
 # ----------------------------- Testing ----------------------------- #
 .PHONY: test test-integration
