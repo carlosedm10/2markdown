@@ -118,3 +118,30 @@ class TestReport:
         write_html(summary, tmp_path)
         write_pdf(summary, tmp_path)
         assert (tmp_path / "2markdown-report.pdf").stat().st_size > 200
+
+    def test_render_html_caps_long_failure_lists(self, tmp_path: Path) -> None:
+        manifest = Manifest(tmp_path / ".2markdown-manifest.json")
+        for index in range(60):
+            manifest.record(
+                tmp_path / f"bad{index}.bin",
+                status="failed",
+                error="timeout after 300.0s",
+                duration_ms=300_000,
+            )
+        summary = build_summary(
+            manifest=manifest,
+            traces=[],
+            batch_spans=[],
+            wall_ms=20,
+            input_dir=tmp_path,
+            output_dir=tmp_path,
+            converted=0,
+            failed=60,
+            skipped=0,
+            config={"ocr_enabled": False},
+        )
+        html = render_html(summary)
+        assert "Failures (60)" in html
+        assert "10 more failures" in html
+        fail_list = html.split("Failures (60)", 1)[1].split("</ul>", 1)[0]
+        assert fail_list.count("<li>") == 51

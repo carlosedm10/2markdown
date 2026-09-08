@@ -72,6 +72,7 @@ CLI (twomarkdown.cli) → paths → processor → walker (optional zip explode, 
 - **Installable package is `twomarkdown`** — imports are `twomarkdown.*`; the CLI entry is `python -m twomarkdown.cli`.
 - **Settings in code, secrets in `.env`, OCR mode in `.ocr-mode`** — flags and tuning are Pydantic `BaseModel` defaults; `Secrets` is the only `BaseSettings` class.
 - **Human report in the export folder, machine trace in the repo** — HTML/PDF sit next to the markdown so you can open them with the files; `telemetry/` is for comparing methods (`make bench`) and finding bottlenecks, not for the document owner.
+- **Per-file timeout is conversion time, not queue time** — parallel batches only start the clock when a worker picks up the file. A hang can leave a zombie thread; the batch still starts the next file.
 
 ## Where the details live
 

@@ -10,6 +10,9 @@ import fitz
 
 REPORT_HTML = "2markdown-report.html"
 REPORT_PDF = "2markdown-report.pdf"
+MAX_HTML_FAILURES = 50
+MAX_HTML_FILE_ROWS = 200
+MAX_PDF_FILE_ROWS = 80
 
 
 def _esc(value: object) -> str:
@@ -104,7 +107,8 @@ def render_html(summary: dict[str, Any]) -> str:
 
     file_rows = ""
     output_dir = str(summary.get("output_dir") or "")
-    for row in files:
+    shown_files = files[:MAX_HTML_FILE_ROWS]
+    for row in shown_files:
         status = str(row.get("status") or "")
         src = _short_path(str(row.get("source") or ""), output_dir)
         file_rows += (
@@ -123,16 +127,34 @@ def render_html(summary: dict[str, Any]) -> str:
                 f'<tr class="err"><td></td><td colspan="6">'
                 f"{_esc(row.get('error'))}</td></tr>"
             )
+    hidden_files = len(files) - len(shown_files)
+    if hidden_files > 0:
+        file_rows += (
+            f'<tr class="err"><td></td><td colspan="6">'
+            f"{hidden_files} more files in "
+            f"<code>.2markdown-manifest.json</code></td></tr>"
+        )
     if not file_rows:
         file_rows = "<tr><td colspan='7'>No files in the manifest.</td></tr>"
 
     fail_block = ""
     if failed:
+        shown_failed = failed[:MAX_HTML_FAILURES]
         items = "".join(
-            f"<li><code>{_esc(row.get('source'))}</code> — {_esc(row.get('error') or 'error')}</li>"
-            for row in failed
+            f"<li><code>{_esc(row.get('source'))}</code> — "
+            f"{_esc(row.get('error') or 'error')}</li>"
+            for row in shown_failed
         )
-        fail_block = f'<section class="card fail"><h2>Failures</h2><ul>{items}</ul></section>'
+        hidden_failed = len(failed) - len(shown_failed)
+        if hidden_failed > 0:
+            items += (
+                f"<li>{hidden_failed} more failures — see "
+                f"<code>.2markdown-manifest.json</code></li>"
+            )
+        fail_block = (
+            f'<section class="card fail"><h2>Failures ({len(failed)})</h2>'
+            f"<ul>{items}</ul></section>"
+        )
 
     mean_rel_label = _rel(mean_rel) if mean_rel is not None else "—"
     cfg = summary.get("config") or {}
@@ -287,7 +309,8 @@ def write_pdf(summary: dict[str, Any], output_dir: Path) -> Path:
         line("  (none)", size=10)
     y += 8
     line("Files", size=13)
-    for row in files:
+    shown = files[:MAX_PDF_FILE_ROWS]
+    for row in shown:
         status = _status_label(str(row.get("status") or ""))
         src = str(row.get("source") or "")
         if len(src) > 70:
@@ -298,6 +321,9 @@ def write_pdf(summary: dict[str, Any], output_dir: Path) -> Path:
         )
         if row.get("error"):
             line(f"             {row.get('error')}", size=8, color=(0.7, 0.1, 0.2))
+    hidden = len(files) - len(shown)
+    if hidden > 0:
+        line(f"  … {hidden} more files in .2markdown-manifest.json", size=8)
 
     doc.save(path)
     doc.close()

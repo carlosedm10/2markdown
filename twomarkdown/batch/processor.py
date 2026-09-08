@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -713,57 +713,93 @@ def process_batch(
                         # Timed-out work may keep running; do not block the batch.
                         pool.shutdown(wait=False)
         else:
-            pool = ThreadPoolExecutor(max_workers=workers)
+            # One executor per in-flight file so a timeout can start the next
+            # file without waiting on the abandoned thread. Deadline starts when
+            # that file is submitted (a slot is free), not when the batch began.
+            remaining = list(work)
+            in_flight: dict[Future, Path] = {}
+            pools: dict[Future, ThreadPoolExecutor] = {}
+            deadlines: dict[Future, float] = {}
+            abandoned: set[Future] = set()
+            zombie_budget = workers
+
+            def _reap_zombies() -> None:
+                for future in list(abandoned):
+                    if not future.done():
+                        continue
+                    abandoned.remove(future)
+                    pool = pools.pop(future, None)
+                    if pool is not None:
+                        pool.shutdown(wait=False)
+
+            def _submit_more() -> None:
+                _reap_zombies()
+                while remaining and len(in_flight) < workers:
+                    if len(abandoned) >= zombie_budget:
+                        break
+                    source_path = remaining.pop(0)
+                    pool = ThreadPoolExecutor(max_workers=1)
+                    future = pool.submit(_handle, source_path, cancels[source_path])
+                    in_flight[future] = source_path
+                    pools[future] = pool
+                    deadlines[future] = time.monotonic() + timeout
+
             try:
-                future_map = {
-                    pool.submit(_handle, source_path, cancels[source_path]): source_path
-                    for source_path in work
-                }
-                deadlines = {
-                    future: time.monotonic() + timeout for future in future_map
-                }
-                pending = set(future_map)
-                abandoned: set[object] = set()
+                _submit_more()
                 with tqdm(
-                    total=len(future_map),
+                    total=len(work),
                     desc="Converting",
                     unit="file",
                     disable=not use_progress,
                 ) as pbar:
-                    while pending:
+                    while in_flight or remaining:
+                        _reap_zombies()
+                        if not in_flight:
+                            if remaining and len(abandoned) >= zombie_budget:
+                                wait(
+                                    abandoned,
+                                    timeout=0.1,
+                                    return_when=FIRST_COMPLETED,
+                                )
+                                continue
+                            _submit_more()
+                            if not in_flight:
+                                break
                         now = time.monotonic()
-                        for future in list(pending):
+                        for future in list(in_flight):
                             if now < deadlines[future]:
                                 continue
-                            pending.remove(future)
+                            source_path = in_flight.pop(future)
                             abandoned.add(future)
-                            source_path = future_map[future]
                             cancels[source_path].set()
                             _consume(_timeout_item(source_path, timeout))
                             pbar.update(1)
-                        if not pending:
-                            break
-                        wait_s = min(deadlines[f] for f in pending) - time.monotonic()
+                            _submit_more()
+                        if not in_flight:
+                            continue
+                        wait_s = min(deadlines[f] for f in in_flight) - time.monotonic()
                         done, _ = wait(
-                            pending,
+                            set(in_flight) | abandoned,
                             timeout=max(0.0, wait_s),
                             return_when=FIRST_COMPLETED,
                         )
                         for future in done:
-                            if future not in pending:
-                                continue
-                            pending.remove(future)
-                            pbar.update(1)
                             if future in abandoned:
                                 continue
-                            source_path = future_map[future]
+                            if future not in in_flight:
+                                continue
+                            source_path = in_flight.pop(future)
+                            pools.pop(future).shutdown(wait=False)
+                            pbar.update(1)
                             try:
                                 item = future.result()
                             except Exception as exc:
                                 item = (source_path, "failed", None, 0, str(exc))
                             _consume(item)
+                            _submit_more()
             finally:
-                pool.shutdown(wait=False)
+                for pool in pools.values():
+                    pool.shutdown(wait=False)
 
         _write_run_artifacts(
             manifest=manifest,

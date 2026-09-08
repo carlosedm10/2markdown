@@ -419,7 +419,7 @@ class TestBatchProcessor:
     def test_process_batch_times_out_parallel_file(
         self, batch_dirs: tuple[Path, Path]
     ) -> None:
-        """process_batch() — parallel workers time out from submit, not as_completed."""
+        """process_batch() — parallel workers time out the hung file only."""
         input_dir, output_dir = batch_dirs
         hung = input_dir / "slow.txt"
         hung.write_text("slow")
@@ -453,6 +453,53 @@ class TestBatchProcessor:
         assert result.failed == 1
         assert result.converted == 1
         assert str(hung.resolve()) in result.failed_paths
+
+    def test_process_batch_parallel_timeout_does_not_expire_queued_files(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """Queued files must not inherit the in-flight files' 300s clock."""
+        input_dir, output_dir = batch_dirs
+        hung_paths = []
+        fast_paths = []
+        for name in ("slow-a.txt", "slow-b.txt"):
+            path = input_dir / name
+            path.write_text("slow")
+            hung_paths.append(path)
+        for name in ("fast-a.txt", "fast-b.txt", "fast-c.txt"):
+            path = input_dir / name
+            path.write_text("fast")
+            fast_paths.append(path)
+
+        def convert(path: Path) -> str:
+            if path.name.startswith("slow"):
+                time.sleep(1.2)
+            return "ok"
+
+        with (
+            patch(
+                "twomarkdown.batch.processor.conversion_config.file_timeout_sec",
+                0.25,
+            ),
+            patch("twomarkdown.batch.processor.conversion_config.parallel_workers", 2),
+            patch(
+                "twomarkdown.converter.markitdown_converter.convert_file",
+                side_effect=convert,
+            ),
+        ):
+            result = process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+                show_progress=False,
+            )
+
+        assert result.failed == 2
+        assert result.converted == 3
+        for path in hung_paths:
+            assert str(path.resolve()) in result.failed_paths
+        for path in fast_paths:
+            assert (output_dir / path.with_suffix(".md").name).exists()
 
     def test_process_batch_manifest_has_first_file_before_second_converts(
         self, batch_dirs: tuple[Path, Path]
