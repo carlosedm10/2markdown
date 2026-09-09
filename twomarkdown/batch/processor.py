@@ -161,6 +161,7 @@ def _compose_pdf(
     doc: fitz.Document | None = None,
     cancel: threading.Event | None = None,
 ) -> tuple[str, list[int]]:
+    _cancelled(cancel)
     engine = ocr_fn or _get_ocr_fn() or ocr.extract_text_with_tesseract
     ocr_pages: list[tuple[int, str]] = []
     close = False
@@ -182,6 +183,7 @@ def _compose_pdf(
                     doc=opened,
                     cancel=cancel,
                 )
+        _cancelled(cancel)
 
         tables: list[tuple[int, str]] = []
         try:

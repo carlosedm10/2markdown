@@ -1,12 +1,17 @@
 """Test cases for batch conversion (twomarkdown.batch.processor)."""
 
 import json
+import threading
 import time
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from twomarkdown.batch.processor import process_batch
+import fitz
+import pytest
+
+from twomarkdown.batch.processor import _compose_pdf, process_batch
+from twomarkdown.converter.markitdown_converter import ConversionError
 
 
 class TestBatchProcessor:
@@ -542,3 +547,16 @@ class TestBatchProcessor:
             )
 
         assert seen_first["ok"] is True
+
+    def test_compose_pdf_does_not_swallow_cancel(self, tmp_path: Path) -> None:
+        """_compose_pdf() — timeout cancel is not a soft compose miss."""
+        doc = fitz.open()
+        doc.new_page()
+        pdf_path = tmp_path / "scan.pdf"
+        doc.save(pdf_path)
+        doc.close()
+        cancel = threading.Event()
+        cancel.set()
+
+        with pytest.raises(ConversionError, match="cancelled"):
+            _compose_pdf("markitdown", pdf_path, cancel=cancel)
