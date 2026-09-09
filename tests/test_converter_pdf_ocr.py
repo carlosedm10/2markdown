@@ -164,7 +164,7 @@ class TestPdfOcrFallback:
     def test_extract_pages_hybrid_calls_llm_when_tesseract_confidence_low(
         self, tmp_path: Path
     ) -> None:
-        """extract_pages() — empty Tesseract still calls ocr_fn (vision) in hybrid OCR."""
+        """extract_pages() — empty Tesseract still calls ocr_fn in hybrid OCR."""
         empty = _make_pdf(tmp_path / "scan.pdf", [""])
         llm_fn = MagicMock(return_value="vision text")
 
