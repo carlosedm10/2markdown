@@ -3,6 +3,7 @@
 import logging
 import re
 import shutil
+import threading
 from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
@@ -167,8 +168,12 @@ def ocr_image_bytes(
     image_bytes: bytes,
     *,
     ocr_fn: Callable[[bytes], str] | None = None,
+    llm_if_empty_only: bool = False,
+    cancel: threading.Event | None = None,
 ) -> str:
     if is_tiny_image(image_bytes):
+        return ""
+    if cancel is not None and cancel.is_set():
         return ""
 
     use_hybrid = conversion_config.ocr_hybrid
@@ -179,17 +184,36 @@ def ocr_image_bytes(
     from twomarkdown.telemetry import note
 
     if use_hybrid:
+        if cancel is not None and cancel.is_set():
+            return ""
         text, conf = tesseract_ocr_with_confidence(image_bytes)
         note("ocr.tesseract", confidence=round(conf, 2))
+        if cancel is not None and cancel.is_set():
+            return text
+        if llm_if_empty_only:
+            if text:
+                return text
+            if llm_fn is not None:
+                if cancel is not None and cancel.is_set():
+                    return text
+                note("ocr.ollama")
+                return llm_fn(image_bytes).strip()
+            return text
         if text and conf >= conversion_config.ocr_confidence_min:
             return text
         if llm_fn is not None:
+            if cancel is not None and cancel.is_set():
+                return text
             note("ocr.ollama")
             return llm_fn(image_bytes).strip()
         return text
 
     if ocr_fn is not None:
+        if cancel is not None and cancel.is_set():
+            return ""
         return ocr_fn(image_bytes).strip()
+    if cancel is not None and cancel.is_set():
+        return ""
     return extract_text_with_tesseract(image_bytes)
 
 

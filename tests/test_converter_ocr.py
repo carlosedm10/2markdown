@@ -1,5 +1,6 @@
 """Test cases for markdown image OCR (twomarkdown.converter.ocr)."""
 
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -304,6 +305,77 @@ class TestOcrImageBytesHybrid:
         assert result == "LLM text"
         ocr_fn.assert_called_once_with(minimal_png_bytes)
 
+    def test_ocr_image_bytes_hybrid_low_confidence_nonempty_calls_llm(
+        self, minimal_png_bytes: bytes
+    ) -> None:
+        ocr_fn = MagicMock(return_value="LLM text")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
+                60.0,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("blurry logo", 10.0),
+            ),
+        ):
+            result = ocr_image_bytes(minimal_png_bytes, ocr_fn=ocr_fn)
+
+        assert result == "LLM text"
+        ocr_fn.assert_called_once_with(minimal_png_bytes)
+
+    def test_ocr_image_bytes_llm_if_empty_only_keeps_nonempty_tesseract(
+        self, minimal_png_bytes: bytes
+    ) -> None:
+        ocr_fn = MagicMock(return_value="LLM text")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
+                60.0,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("blurry exam text", 10.0),
+            ),
+        ):
+            result = ocr_image_bytes(
+                minimal_png_bytes, ocr_fn=ocr_fn, llm_if_empty_only=True
+            )
+
+        assert result == "blurry exam text"
+        ocr_fn.assert_not_called()
+
+    def test_ocr_image_bytes_skips_llm_when_cancelled(
+        self, minimal_png_bytes: bytes
+    ) -> None:
+        ocr_fn = MagicMock(return_value="LLM text")
+        cancel = threading.Event()
+
+        def tesseract(_image_bytes: bytes) -> tuple[str, float]:
+            cancel.set()
+            return ("", 10.0)
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                side_effect=tesseract,
+            ),
+        ):
+            result = ocr_image_bytes(
+                minimal_png_bytes, ocr_fn=ocr_fn, cancel=cancel
+            )
+
+        assert result == ""
+        ocr_fn.assert_not_called()
+
     def test_ocr_image_bytes_hybrid_does_not_recurse_on_tesseract_fn(
         self, minimal_png_bytes: bytes
     ) -> None:
@@ -336,6 +408,30 @@ class TestOcrImageBytesHybrid:
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
         ):
             result = ocr_image_bytes(minimal_png_bytes, ocr_fn=ocr_fn)
+
+        assert result == "LLM text"
+        ocr_fn.assert_called_once_with(minimal_png_bytes)
+
+    def test_ocr_image_bytes_llm_if_empty_only_calls_llm_when_empty(
+        self, minimal_png_bytes: bytes
+    ) -> None:
+        ocr_fn = MagicMock(return_value="LLM text")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
+                60.0,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("", 10.0),
+            ),
+        ):
+            result = ocr_image_bytes(
+                minimal_png_bytes, ocr_fn=ocr_fn, llm_if_empty_only=True
+            )
 
         assert result == "LLM text"
         ocr_fn.assert_called_once_with(minimal_png_bytes)

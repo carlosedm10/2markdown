@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.exceptions import ModelAPIError
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 _agent: Agent[None, str] | None = None
 _describe_agent: Agent[None, str] | None = None
+# Host Ollama is one model; parallel PDF workers must not stampede it.
+_ollama_vision_lock = threading.Semaphore(1)
 
 
 def _ollama_provider_factory(provider_name: str):
@@ -72,9 +75,10 @@ def describe_image_bytes_llm(
     agent = get_figure_agent()
     content = BinaryContent(data=prepared, media_type=mime_type)
     try:
-        result = agent.run_sync(
-            ["Describe this document figure for indexing.", content],
-        )
+        with _ollama_vision_lock:
+            result = agent.run_sync(
+                ["Describe this document figure for indexing.", content],
+            )
         return (result.output or "").strip()
     except ModelAPIError as exc:
         logger.warning("Figure description API error: %s", exc)
@@ -101,7 +105,7 @@ def ocr_image_bytes_llm(image_bytes: bytes, *, mime_type: str = "image/png") -> 
     agent = get_image_ocr_agent()
     content = BinaryContent(data=prepared, media_type=mime_type)
     try:
-        with span("ocr.ollama"):
+        with _ollama_vision_lock, span("ocr.ollama"):
             result = agent.run_sync(
                 [
                     "Extract all visible text from this image.",

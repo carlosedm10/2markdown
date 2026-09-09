@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,6 +15,13 @@ from twomarkdown.config import pdf_ocr_config
 from twomarkdown.telemetry import span
 
 logger = logging.getLogger(__name__)
+
+
+def _raise_if_cancelled(cancel: threading.Event | None) -> None:
+    if cancel is not None and cancel.is_set():
+        from twomarkdown.converter.markitdown_converter import ConversionError
+
+        raise ConversionError("cancelled")
 
 
 @contextmanager
@@ -59,7 +67,10 @@ def _render_page_pixmap(doc: fitz.Document, page_index: int) -> bytes:
     zoom = pdf_ocr_config.pdf_ocr_dpi / 72.0
     matrix = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix=matrix, alpha=False)
-    return pix.tobytes("png")
+    try:
+        return pix.tobytes("png")
+    finally:
+        pix = None
 
 
 def extract_pages(
@@ -68,6 +79,7 @@ def extract_pages(
     ocr_fn: Callable[[bytes], str],
     show_progress: bool = False,
     doc: fitz.Document | None = None,
+    cancel: threading.Event | None = None,
 ) -> list[tuple[int, str]]:
     """OCR PDF pages with insufficient native text; returns (page_number, text)."""
     from twomarkdown.converter import ocr as ocr_mod
@@ -90,21 +102,28 @@ def extract_pages(
             )
 
         for i in page_indices:
+            _raise_if_cancelled(cancel)
             page = opened[i]
             if len(page.get_text().strip()) >= min_chars:
                 continue
 
             page_num = i + 1
             if not show_progress:
-                logger.info(
+                logger.debug(
                     "PDF page OCR %s/%s: %s",
                     page_num,
                     limit,
                     pdf_path.name,
                 )
             png_bytes = _render_page_pixmap(opened, i)
+            _raise_if_cancelled(cancel)
             with span("pdf.page_ocr", page=page_num):
-                text = ocr_mod.ocr_image_bytes(png_bytes, ocr_fn=ocr_fn).strip()
+                text = ocr_mod.ocr_image_bytes(
+                    png_bytes,
+                    ocr_fn=ocr_fn,
+                    llm_if_empty_only=True,
+                    cancel=cancel,
+                ).strip()
             if text:
                 results.append((page_num, text))
 

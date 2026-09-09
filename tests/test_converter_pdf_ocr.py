@@ -1,12 +1,15 @@
 """Test cases for scanned PDF OCR fallback (twomarkdown.converter.pdf_ocr)."""
 
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import fitz
+import pytest
 
 from twomarkdown.config import pdf_ocr_config
 from twomarkdown.converter import pdf_ocr
+from twomarkdown.converter.markitdown_converter import ConversionError
 
 LONG_TEXT = "x" * pdf_ocr_config.pdf_ocr_min_chars
 SHORT_TEXT = "scan"
@@ -161,7 +164,7 @@ class TestPdfOcrFallback:
     def test_extract_pages_hybrid_calls_llm_when_tesseract_confidence_low(
         self, tmp_path: Path
     ) -> None:
-        """extract_pages() — hybrid OCR uses ocr_fn when Tesseract confidence is low."""
+        """extract_pages() — empty Tesseract still calls ocr_fn (vision) in hybrid OCR."""
         empty = _make_pdf(tmp_path / "scan.pdf", [""])
         llm_fn = MagicMock(return_value="vision text")
 
@@ -181,4 +184,47 @@ class TestPdfOcrFallback:
 
         llm_fn.assert_called_once()
         assert pages == [(1, "vision text")]
+
+    def test_extract_pages_hybrid_skips_llm_when_tesseract_has_text(
+        self, tmp_path: Path
+    ) -> None:
+        """extract_pages() — low-confidence nonempty Tesseract does not call ocr_fn."""
+        empty = _make_pdf(tmp_path / "scan.pdf", [""])
+        llm_fn = MagicMock(return_value="vision text")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
+                60.0,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("blurry exam text", 10.0),
+            ),
+        ):
+            pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
+
+        llm_fn.assert_not_called()
+        assert pages == [(1, "blurry exam text")]
+
+    def test_extract_pages_stops_remaining_pages_when_cancelled(
+        self, tmp_path: Path
+    ) -> None:
+        """extract_pages() — cancel raises so remaining pages are not OCR'd."""
+        scan = _make_pdf(tmp_path / "scan.pdf", ["", "", ""])
+        cancel = threading.Event()
+        calls: list[int] = []
+
+        def ocr_fn(_: bytes) -> str:
+            calls.append(1)
+            cancel.set()
+            return f"OCR-{len(calls)}"
+
+        with patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", False):
+            with pytest.raises(ConversionError, match="cancelled"):
+                pdf_ocr.extract_pages(scan, ocr_fn=ocr_fn, cancel=cancel)
+
+        assert len(calls) == 1
 

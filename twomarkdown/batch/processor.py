@@ -159,6 +159,7 @@ def _compose_pdf(
     ocr_fn: Callable[[bytes], str] | None = None,
     show_progress: bool = False,
     doc: fitz.Document | None = None,
+    cancel: threading.Event | None = None,
 ) -> tuple[str, list[int]]:
     engine = ocr_fn or _get_ocr_fn() or ocr.extract_text_with_tesseract
     ocr_pages: list[tuple[int, str]] = []
@@ -179,6 +180,7 @@ def _compose_pdf(
                     ocr_fn=engine,
                     show_progress=show_progress,
                     doc=opened,
+                    cancel=cancel,
                 )
 
         tables: list[tuple[int, str]] = []
@@ -199,6 +201,8 @@ def _compose_pdf(
                 doc=opened,
             )
         return text, [n for n, _ in ocr_pages]
+    except ConversionError:
+        raise
     except Exception as exc:
         logger.warning("PDF compose failed for %s: %s", source_path, exc)
         return markdown, []
@@ -212,10 +216,15 @@ def _convert_pdf_with_ocr(
     *,
     ocr_fn: Callable[[bytes], str] | None = None,
     show_progress: bool = False,
+    cancel: threading.Event | None = None,
 ) -> str:
     markdown = markitdown_converter.convert_file(pdf_path)
     composed, _ = _compose_pdf(
-        markdown, pdf_path, ocr_fn=ocr_fn, show_progress=show_progress
+        markdown,
+        pdf_path,
+        ocr_fn=ocr_fn,
+        show_progress=show_progress,
+        cancel=cancel,
     )
     return composed
 
@@ -297,6 +306,7 @@ def _convert_source_to_markdown(
     *,
     ocr_fn: Callable[[bytes], str] | None = None,
     show_progress: bool = False,
+    cancel: threading.Event | None = None,
 ) -> str:
     suffix = _effective_suffix(source_path)
     engine = ocr_fn if ocr_fn is not None else _get_ocr_fn()
@@ -304,7 +314,7 @@ def _convert_source_to_markdown(
     if iwork_config.iwork_enabled and iwork.is_iwork_bundle(source_path):
         set_converter("iwork")
         convert_pdf = lambda p: _convert_pdf_with_ocr(  # noqa: E731
-            p, ocr_fn=engine, show_progress=show_progress
+            p, ocr_fn=engine, show_progress=show_progress, cancel=cancel
         )
         with span("iwork"):
             return iwork.convert_bundle(source_path, convert_pdf=convert_pdf)
@@ -344,7 +354,11 @@ def _convert_source_to_markdown(
     if suffix == ".pdf":
         set_converter("pdf")
         markdown, _ = _compose_pdf(
-            markdown, source_path, ocr_fn=engine, show_progress=show_progress
+            markdown,
+            source_path,
+            ocr_fn=engine,
+            show_progress=show_progress,
+            cancel=cancel,
         )
     elif ocr.is_raster_image(source_path) or suffix == ".svg":
         if not show_progress:
@@ -413,6 +427,21 @@ def _cancelled(cancel: threading.Event | None) -> None:
         raise ConversionError("cancelled")
 
 
+def _skip_ocr_if_cancelled(
+    inner: Callable[[bytes], str] | None,
+    cancel: threading.Event | None,
+) -> Callable[[bytes], str] | None:
+    if inner is None or cancel is None:
+        return inner
+
+    def _wrapped(image_bytes: bytes) -> str:
+        if cancel.is_set():
+            return ""
+        return inner(image_bytes)
+
+    return _wrapped
+
+
 def _convert_one(
     source_path: Path,
     *,
@@ -423,9 +452,14 @@ def _convert_one(
     cancel: threading.Event | None = None,
 ) -> tuple[str, int]:
     _cancelled(cancel)
+    engine = _skip_ocr_if_cancelled(ocr_fn, cancel)
     markdown = _convert_source_to_markdown(
-        source_path, ocr_fn=ocr_fn, show_progress=show_progress
+        source_path,
+        ocr_fn=engine,
+        show_progress=show_progress,
+        cancel=cancel,
     )
+    _cancelled(cancel)
     if not markdown or not markdown.strip():
         if ocr.is_raster_image(source_path):
             markdown = (
@@ -439,7 +473,7 @@ def _convert_one(
             markdown = ocr.enrich_markdown_images(
                 markdown,
                 source_path,
-                ocr_fn=ocr_fn,
+                ocr_fn=engine,
             )
 
     _cancelled(cancel)

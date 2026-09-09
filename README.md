@@ -30,6 +30,8 @@ make up                 # optional: keep backend container + host Ollama running
 
 To switch OCR mode later, run the other `make build` variant again.
 
+For a large archive (thousands of files, exam scans), stay on Tesseract (`make build`). `make build ollama` is for a small set of hard scans, not a 3 000-file tree: vision OCR is minutes per PDF and will OOM or timeout if four workers hit one host Ollama.
+
 The converter reaches host Ollama at `http://host.docker.internal:11434/v1` (default in `twomarkdown/config.py`).
 
 **OCR flags:** `--ocr-backend=ollama` enables the vision LLM (no silent Tesseract fallback). `--ollama` is a shortcut for the same. Default Tesseract language is `eng+spa` (`tesseract_lang` in `twomarkdown/config.py`).
@@ -71,9 +73,13 @@ When OCR mode is Ollama (`make build ollama` writes `.ocr-mode`), `make process`
 # Folder of mixed Office docs, PDFs, images
 make process INPUT="$HOME/Downloads/client-docs"
 
-# Single scanned PDF (best with Ollama)
+# Single scanned PDF (Ollama only helps pages Tesseract leaves empty)
 make build ollama
 make process INPUT="$HOME/Desktop/scan.pdf"
+
+# Large archive of exam scans — Tesseract only (far faster; avoids Ollama OOM)
+make build
+make process INPUT="$HOME/Documents/exams"
 ```
 
 ## Supported formats
@@ -109,9 +115,11 @@ Video files still soft-fail.
 
 ## Scanned PDFs
 
-OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has fewer than `pdf_ocr_min_chars` characters, that page is rasterized and OCR'd (Tesseract or Ollama, depending on your build). Mixed PDFs (digital text + scans) OCR only the weak pages. Output uses `## Page N` with an `### OCR` subsection for scanned pages (prose, not fenced code). Tables are extracted when possible (`### Table (page N)`).
+OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has fewer than `pdf_ocr_min_chars` characters, that page is rasterized and OCR'd. Mixed PDFs (digital text + scans) OCR only the weak pages. Output uses `## Page N` with an `### OCR` subsection for scanned pages (prose, not fenced code). Tables are extracted when possible (`### Table (page N)`).
 
-If Tesseract confidence is below `ocr_confidence_min` and Ollama is enabled, 2markdown retries that image with the vision model (`ocr_hybrid`).
+PDF page OCR is **Tesseract-first**: if Tesseract returns any usable text, that text is kept and Ollama is not called for the page. Ollama vision runs only when the page is empty (and you built with `make build ollama`). Standalone images and markdown embeds still use hybrid OCR (low Tesseract confidence → vision). Vision calls are serialized (one in flight). A per-file timeout cancels remaining pages on that PDF.
+
+For large archives, use Tesseract: `make build` then `make process INPUT=...` (not `make build ollama`), unless you want vision on empty pages only. `OCR_BACKEND=tesseract` on `make process` also forces Tesseract for that run. Four workers plus per-page Ollama will stampede the host GPU and can OOM the converter (Docker Error 137).
 
 **Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` (that also updates `.ocr-mode`).
 
@@ -126,7 +134,7 @@ Feature flags and tuning live in [`twomarkdown/config.py`](twomarkdown/config.py
 | `tesseract_lang` | `eng+spa` | Tesseract language(s) for OCR |
 | `clean_markdown` | `true` | Fix mojibake, hyphenation, repeated headers |
 | `extract_tables` | `true` | PDF/Excel tables as GitHub-flavored markdown |
-| `ocr_hybrid` | `true` | Fall back to Ollama when Tesseract confidence is low |
+| `ocr_hybrid` | `true` | Images: fall back to Ollama when Tesseract confidence is low. PDF pages: Ollama only if Tesseract is empty |
 | `ocr_confidence_min` | `60` | Minimum Tesseract mean confidence (0–100) |
 | `describe_figures` | `true` | Caption images with little OCR text (needs Ollama) |
 | `extract_assets` | `true` | Dump PDF embeds next to the `.md` |

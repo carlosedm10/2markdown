@@ -9,8 +9,8 @@ These names repeat in config, CLI flags, the manifest, and frontmatter. They *ar
 | Term | Covers |
 |---|---|
 | **batch** | Walk input, convert each file, soft-fail, write sibling `*_2markdown/` |
-| **OCR backend** | `tesseract` (default, `eng+spa`) or `ollama` (host vision model); hybrid uses Tesseract confidence then vision |
-| **PDF page OCR** | Per-page native-text threshold; only weak pages are rasterized; tables and page headings stay in reading order |
+| **OCR backend** | `tesseract` (default, `eng+spa`) or `ollama` (host vision model); images hybrid on low confidence, PDF pages vision only if empty |
+| **PDF page OCR** | Per-page native-text threshold; only weak pages are rasterized; Tesseract-first, timeout cancels remaining pages |
 | **iWork bundle** | `.pages` / `.key` / `.numbers` as one unit; convert the bundled `preview.pdf` through the PDF pipeline |
 | **e-reader** | `.epub` / `.fb2` / `.mobi` / `.azw` / `.azw3` via `twomarkdown/converter/ereader.py` |
 | **manifest** | `<output>/.2markdown-manifest.json` — status, `ocr_backend`, checksum, timing |
@@ -40,7 +40,7 @@ CLI (twomarkdown.cli) → paths → processor → walker (optional zip explode, 
 
 - **Reads:** a host path (file or tree). `make process` bind-mounts only that path and the sibling output directory.
 - **Writes:** mirrored `.md` files (YAML frontmatter includes `source`, `ocr_backend`, `title`, `ocr_pages`, `tables`, `language`, `char_count`), the manifest (checksum + duration), `2markdown-report.html` / `.pdf` (batch stats and per-file reliability), `.2markdown-trace.json` (named spans), optional `_assets/` and `.chunks.json`. OCR text is cached under the output dir. Generic zips unpack into `.unzipped/` then markdown is written as if the zip were a folder (`archive.zip/a.pdf` → `archive/a.md`). `make process` also appends a run dump under `telemetry/` in the repo for bottleneck research.
-- **OCR:** Tesseract first when hybrid is on; low confidence or empty text can call Ollama. Tiny images are skipped. Remote images are fetched only if enabled, capped at 8 MiB.
+- **OCR:** Tesseract first when hybrid is on. Standalone images may call Ollama on low confidence; PDF pages call Ollama only when Tesseract returns no text. Vision calls are one-at-a-time. Tiny images are skipped. Remote images are fetched only if enabled, capped at 8 MiB.
 
 ### Entities
 
@@ -65,14 +65,14 @@ CLI (twomarkdown.cli) → paths → processor → walker (optional zip explode, 
 - **PDF OCR is per page** — a mixed PDF with some extractable text used to skip scans entirely. OCR is prose under `## Page N`, not fenced code.
 - **Native e-readers, not only MarkItDown** — EPUB spine order and FB2/MOBI needed their own module. EPUBs are copied onto local disk before parsing because Docker bind-mounts of iCloud Drive often break `zipfile` seek (`Bad Zip file`).
 - **Ollama is not stopped by `make down`** — tearing down Docker must not kill a host daemon other tools use (`make stop-ollama` is explicit).
-- **Tesseract then vision** — hybrid OCR spends GPU only when Tesseract confidence is low.
+- **Tesseract then vision** — standalone images and markdown embeds call Ollama when Tesseract confidence is low. PDF page OCR keeps any Tesseract text and only calls Ollama if the page is empty. One vision request is in flight at a time so parallel PDF workers cannot stampede host Ollama.
 - **Make is still the process CLI** — `VERBOSE`, `DRY_RUN`, `WORKERS`, `FORCE`, `OCR_BACKEND`, `OUTPUT`, `NO_OCR`, and `EMIT_CHUNKS` are Make vars forwarded into the Typer CLI; converter knobs live in `twomarkdown/config.py`.
 - **OCR engine lives in `.ocr-mode`** — `make build` / `make build ollama` write that gitignored file instead of rewriting `twomarkdown/config.py`.
 - **iWork is `preview.pdf` only** — no IWA parsers, Kreuzberg, or AppleScript in Docker. Bundles without a preview soft-fail.
 - **Installable package is `twomarkdown`** — imports are `twomarkdown.*`; the CLI entry is `python -m twomarkdown.cli`.
 - **Settings in code, secrets in `.env`, OCR mode in `.ocr-mode`** — flags and tuning are Pydantic `BaseModel` defaults; `Secrets` is the only `BaseSettings` class.
 - **Human report in the export folder, machine trace in the repo** — HTML/PDF sit next to the markdown so you can open them with the files; `telemetry/` is for comparing methods (`make bench`) and finding bottlenecks, not for the document owner.
-- **Per-file timeout is conversion time, not queue time** — parallel batches only start the clock when a worker picks up the file. A hang can leave a zombie thread; the batch still starts the next file.
+- **Per-file timeout is conversion time, not queue time** — parallel batches only start the clock when a worker picks up the file. Timeout cancels remaining PDF pages so a zombie thread does not keep rasterizing or queuing Ollama. An in-flight vision call can still finish; it will not start new OCR.
 
 ## Where the details live
 
