@@ -823,6 +823,20 @@ def process_batch(
                 continue
             work.append(source_path)
 
+        # Cost the batch before running it: the cheap PyMuPDF pass that finds
+        # model-bound pages costs seconds, and it buys both an honest up-front
+        # estimate and a sane order to run in.
+        if work:
+            try:
+                from twomarkdown.batch.planner import order_by_cost, plan_batch
+
+                with span("batch.plan"):
+                    batch_plan = plan_batch(work)
+                logger.info("%s", batch_plan.describe())
+                work = order_by_cost(work, batch_plan)
+            except Exception as exc:
+                logger.debug("Batch planning skipped: %s", exc)
+
         def _handle(
             source_path: Path, cancel: threading.Event | None
         ) -> tuple[Path, str, int | None, int, str | None]:

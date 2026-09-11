@@ -30,8 +30,18 @@ logger = logging.getLogger(__name__)
 # OpenAI client retries it, and the batch stalls at 0% CPU holding the vision permit.
 _local = threading.local()
 
-# Host Ollama is one model; parallel PDF workers must not stampede it.
-_ollama_vision_lock = threading.Semaphore(1)
+# One permit per model, not one overall. Page transcription and figure captions
+# use different models that both stay resident on the host, so they are genuinely
+# concurrent; workers still cannot stampede either one. When both names resolve
+# to the same model the permits are shared, preserving the single-queue safety.
+_page_ocr_lock = threading.Semaphore(1)
+_figure_lock = threading.Semaphore(1)
+
+
+def _figure_permit() -> threading.Semaphore:
+    if llm_config.ollama_figure_model == llm_config.ollama_vision_model:
+        return _page_ocr_lock
+    return _figure_lock
 
 # Small vision models fall into repetition loops on dense pages (gemma3:4b will
 # repeat one equation until it is cut off). Greedy decoding plus a hard token
@@ -131,7 +141,7 @@ def get_figure_agent() -> Agent[None, str]:
     agent = getattr(_local, "figure_agent", None)
     if agent is None:
         model = infer_model(
-            llm_config.ollama_vision_model,
+            llm_config.ollama_figure_model,
             provider_factory=_ollama_provider_factory,
         )
         agent = Agent(
@@ -160,7 +170,7 @@ def describe_image_bytes_llm(
     agent = get_figure_agent()
     content = BinaryContent(data=prepared, media_type=mime_type)
     try:
-        with _ollama_vision_lock:
+        with _figure_permit():
             result = agent.run_sync(
                 [
                     "Describe this figure for revision notes. "
@@ -194,7 +204,7 @@ def ocr_image_bytes_llm(image_bytes: bytes, *, mime_type: str = "image/png") -> 
     agent = get_image_ocr_agent()
     content = BinaryContent(data=prepared, media_type=mime_type)
     try:
-        with _ollama_vision_lock, span("ocr.ollama"):
+        with _page_ocr_lock, span("ocr.ollama"):
             result = agent.run_sync(
                 [
                     "Transcribe this page to Markdown.",

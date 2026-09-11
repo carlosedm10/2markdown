@@ -177,15 +177,22 @@ class FigureConfig(BaseModel):
     figure_wide_part_ratio: float = 0.8
     figure_max_wide_parts: float = 0.3
     figure_max_per_page: int = 6
-    # Descriptions need a vision model; without one, figures are still rendered
-    # and linked inline, just not described.
-    describe_figures_llm: bool = True
+    # Opt-in: describing figures was 916s of a measured 1092s run, while rendering
+    # the crops costs almost nothing. The crop is the trustworthy artefact — the
+    # description is advisory and unreliable on curve behaviour — so figures are
+    # always rendered and linked inline, and only described when asked.
+    describe_figures_llm: bool = False
 
 
 class LLMConfig(BaseModel):
     llm_enabled: bool = LLM_ENABLED
     ollama_base_url: str = "http://host.docker.internal:11434/v1"
     ollama_vision_model: str = OLLAMA_VISION_MODEL
+    # Figure descriptions run on their own, smaller model: it matches model size
+    # to stakes (a wrong transcription is permanent, a caption sits beside its
+    # crop), and both stay resident on the host so the two queues run in
+    # parallel. Set to the page model to fall back to one shared queue.
+    ollama_figure_model: str = "ollama:qwen2.5vl:7b"
     llm_ocr_max_dimension: int = 1568
     llm_ocr_max_bytes: int = 1_500_000
     llm_ocr_jpeg_quality: int = 85

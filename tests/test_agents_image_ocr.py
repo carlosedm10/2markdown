@@ -96,3 +96,29 @@ class TestStripInventedImageLinks:
 
         text = "La funcion $f(x)$ es par. Ver [enlace](http://x) normal."
         assert strip_invented_image_links(text) == text
+
+
+class TestSeparateModelQueues:
+    def test_distinct_models_get_distinct_queues(self, monkeypatch) -> None:
+        """_figure_permit() — two models means two queues, so they run concurrently."""
+        from twomarkdown.agents import image_ocr
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "ollama_vision_model", "ollama:big")
+        monkeypatch.setattr(llm_config, "ollama_figure_model", "ollama:small")
+        assert image_ocr._figure_permit() is image_ocr._figure_lock
+
+    def test_permits_are_shared_when_models_match(self, monkeypatch) -> None:
+        """_figure_permit() — one model means one queue, as before."""
+        from twomarkdown.agents import image_ocr
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "ollama_vision_model", "ollama:same")
+        monkeypatch.setattr(llm_config, "ollama_figure_model", "ollama:same")
+        assert image_ocr._figure_permit() is image_ocr._page_ocr_lock
+
+    def test_page_and_figure_permits_are_distinct_objects(self) -> None:
+        """The two queues are independent locks, so neither blocks the other."""
+        from twomarkdown.agents import image_ocr
+
+        assert image_ocr._page_ocr_lock is not image_ocr._figure_lock
