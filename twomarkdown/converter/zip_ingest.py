@@ -11,7 +11,7 @@ from twomarkdown.converter.filetype import sniff_suffix
 _OFFICE_ZIP_SUFFIXES = frozenset({".docx", ".xlsx", ".pptx"})
 _IWORK_ZIP_SUFFIXES = frozenset({".pages", ".key", ".numbers"})
 _NEVER_EXPLODE_SUFFIXES = (
-    _OFFICE_ZIP_SUFFIXES | _IWORK_ZIP_SUFFIXES | EREADER_SUFFIXES
+    _OFFICE_ZIP_SUFFIXES | _IWORK_ZIP_SUFFIXES | EREADER_SUFFIXES | {".xmind"}
 )
 
 

@@ -32,6 +32,7 @@ help:
 	@echo "  make down                     Stop Docker containers (compose down --remove-orphans)"
 	@echo "  make restart                  Restart the backend container"
 	@echo "  make stop-ollama              Stop host Ollama"
+	@echo "  make export-iwork INPUT=\"/path\"  Export .pages/.key/.numbers to PDF (host, needs Pages)"
 	@echo "  make process INPUT=\"/path\" [VERBOSE=1] [DRY_RUN=1] [WORKERS=n]"
 	@echo "            [FORCE=1] [OCR_BACKEND=tesseract|ollama] [OUTPUT=/path]"
 	@echo "            [NO_OCR=1] [EMIT_CHUNKS=1]"
@@ -66,7 +67,7 @@ help:
 	@echo "  make clean-builder            clean + docker builder prune"
 
 # ------------------------------ Docker Compose ------------------------------ #
-.PHONY: fresh-setup build up restart process down stop-ollama
+.PHONY: fresh-setup build up restart process down stop-ollama export-iwork
 
 # Reset secrets file and tear down stack. Run once on a new machine.
 # Feature flags live in twomarkdown/config.py; .env is credentials only.
@@ -269,3 +270,11 @@ clean-builder: clean
 	@echo ":: clean-builder: ."
 	docker builder prune -f
 	@echo "Builder prune complete. Run make build afterwards."
+
+# Export iWork documents to PDF with the Apple apps. Runs on the host, not in
+# Docker: only Pages/Keynote/Numbers can read the IWA format, and iCloud bundles
+# ship just a first-page preview image.
+export-iwork:
+	@echo ":: export-iwork: host"
+	@test -n "$(INPUT)" || (echo "Usage: make export-iwork INPUT=\"/path/to/folder\"" && exit 1)
+	python3 scripts/export_iwork.py "$(INPUT)" $(if $(FORCE),--force,) $(if $(DRY_RUN),--dry-run,)

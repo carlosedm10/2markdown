@@ -154,13 +154,13 @@ class Manifest:
             and record.ocr_backend != ocr_backend
         ):
             return False
-        if (
-            checksum is not None
-            and record is not None
-            and record.checksum is not None
-            and record.checksum != checksum
-        ):
-            return False
+        if checksum is not None and record is not None and record.checksum is not None:
+            if record.checksum != checksum:
+                return False
+            # Content is provably identical, so skip regardless of timestamps.
+            # iCloud Drive rewrites mtime when it syncs or re-downloads a file; the
+            # old mtime gate then re-ran hours of vision OCR on unchanged sources.
+            return True
         try:
             return source.stat().st_mtime <= output_md.stat().st_mtime
         except OSError:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -15,6 +16,24 @@ from twomarkdown.config import pdf_ocr_config
 from twomarkdown.telemetry import span
 
 logger = logging.getLogger(__name__)
+
+
+_TOKEN_RE = re.compile(r"\S+")
+
+
+def is_scrambled_text(text: str) -> bool:
+    """True when a page's text layer is shredded rather than merely short.
+
+    Slides built with equation objects extract as loose tokens — "Tol x f x x Tol
+    x f Tol x x k k k k" — which is unreadable but long, so the character-count
+    test passes it through untouched. A high share of single-character tokens is
+    the signature; the threshold sits above every readable page measured.
+    """
+    tokens = _TOKEN_RE.findall(text or "")
+    if len(tokens) < pdf_ocr_config.pdf_text_scramble_min_tokens:
+        return False
+    singles = sum(1 for token in tokens if len(token) == 1)
+    return singles / len(tokens) > pdf_ocr_config.pdf_text_scramble_ratio
 
 
 def _raise_if_cancelled(cancel: threading.Event | None) -> None:
@@ -55,7 +74,8 @@ def should_fallback(
         path = pdf_path if pdf_path is not None else Path(".")
         with open_pdf(path, doc) as opened:
             for page in opened:
-                if len(page.get_text().strip()) < min_chars:
+                page_text = page.get_text().strip()
+                if len(page_text) < min_chars or is_scrambled_text(page_text):
                     return True
         return False
     text = (markdown or "").strip()
@@ -104,7 +124,9 @@ def extract_pages(
         for i in page_indices:
             _raise_if_cancelled(cancel)
             page = opened[i]
-            if len(page.get_text().strip()) >= min_chars:
+            page_text = page.get_text().strip()
+            scrambled = is_scrambled_text(page_text)
+            if len(page_text) >= min_chars and not scrambled:
                 continue
 
             page_num = i + 1
@@ -121,7 +143,8 @@ def extract_pages(
                 text = ocr_mod.ocr_image_bytes(
                     png_bytes,
                     ocr_fn=ocr_fn,
-                    llm_if_empty_only=True,
+                    llm_min_confidence=pdf_ocr_config.pdf_ocr_llm_min_confidence,
+                    force_llm=scrambled,
                     cancel=cancel,
                 ).strip()
             if text:
@@ -187,6 +210,10 @@ def compose_pdf_markdown(
             page_num = index + 1
             chunks = [f"## Page {page_num}"]
             native = _native_page_text(page, min_chars)
+            # A scrambled text layer is noise once the model has transcribed the
+            # page; keeping both would leave the garbage above the good version.
+            if native and page_num in ocr_map and is_scrambled_text(native):
+                native = ""
             if native:
                 chunks.append(native)
                 native_concat.append(native)
@@ -200,7 +227,11 @@ def compose_pdf_markdown(
     body = "\n\n".join(parts).strip()
     mid = (markitdown_text or "").strip()
     native_joined = "\n\n".join(native_concat).strip()
-    if mid and len(mid) > max(len(native_joined) * 1.2, 80) and mid not in body:
+    # Only a safety net for when per-page extraction found almost nothing. The old
+    # "MarkItDown is 1.2x longer" test fired on ordinary decks and appended a second
+    # copy of the whole document, full of MarkItDown's own malformed tables.
+    thin_native = len(native_joined) < 200
+    if mid and thin_native and len(mid) > len(native_joined) and mid not in body:
         extra = f"## Document (MarkItDown)\n\n{mid}"
         if body:
             return f"{body}\n\n{extra}"

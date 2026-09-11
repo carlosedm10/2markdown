@@ -169,8 +169,19 @@ def ocr_image_bytes(
     *,
     ocr_fn: Callable[[bytes], str] | None = None,
     llm_if_empty_only: bool = False,
+    llm_min_confidence: float | None = None,
+    force_llm: bool = False,
     cancel: threading.Event | None = None,
 ) -> str:
+    """OCR raw image bytes, optionally escalating weak Tesseract output to the LLM.
+
+    ``llm_min_confidence`` escalates whenever Tesseract's mean word confidence falls
+    below the threshold. ``llm_if_empty_only`` escalates only on empty output, which
+    keeps confident nonsense (handwriting) and never reaches the vision model.
+    ``force_llm`` skips Tesseract entirely: on a slide whose equations are laid out
+    as separate objects, Tesseract reads the prose confidently and still shreds the
+    maths, so its confidence score says nothing useful about the page.
+    """
     if is_tiny_image(image_bytes):
         return ""
     if cancel is not None and cancel.is_set():
@@ -183,6 +194,15 @@ def ocr_image_bytes(
 
     from twomarkdown.telemetry import note
 
+    if force_llm and llm_fn is not None:
+        if cancel is not None and cancel.is_set():
+            return ""
+        note("ocr.ollama", forced=True)
+        text = llm_fn(image_bytes).strip()
+        if text:
+            return text
+        # Model declined the page: fall through to the ordinary path.
+
     if use_hybrid:
         if cancel is not None and cancel.is_set():
             return ""
@@ -190,6 +210,18 @@ def ocr_image_bytes(
         note("ocr.tesseract", confidence=round(conf, 2))
         if cancel is not None and cancel.is_set():
             return text
+        if llm_min_confidence is not None:
+            if text and conf >= llm_min_confidence:
+                return text
+            if llm_fn is not None:
+                if cancel is not None and cancel.is_set():
+                    return text
+                note("ocr.ollama", tesseract_confidence=round(conf, 2))
+                llm_text = llm_fn(image_bytes).strip()
+                # Keep Tesseract's output only when the model declines the page.
+                return llm_text or text
+            return text
+
         if llm_if_empty_only:
             if text:
                 return text
@@ -217,7 +249,7 @@ def ocr_image_bytes(
     return extract_text_with_tesseract(image_bytes)
 
 
-def describe_image_bytes(image_bytes: bytes) -> str:
+def describe_image_bytes(image_bytes: bytes, *, language: str | None = None) -> str:
     if not conversion_config.describe_figures:
         return ""
     try:
@@ -226,7 +258,7 @@ def describe_image_bytes(image_bytes: bytes) -> str:
 
         if not llm_config.llm_enabled:
             return ""
-        return describe_image_bytes_llm(image_bytes).strip()
+        return describe_image_bytes_llm(image_bytes, language=language).strip()
     except Exception as exc:
         logger.debug("Figure description skipped: %s", exc)
         return ""

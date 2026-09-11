@@ -104,6 +104,10 @@ def _sniff_zip_suffix(path: Path) -> str | None:
         if "ppt/presentation.xml" in names:
             return ".pptx"
 
+    # XMind is a zip too; without this it would be exploded as a generic archive.
+    if "content.json" in names and "metadata.json" in names:
+        return ".xmind"
+
     if "Index/Metadata.iwa" in names or "Index/Document.iwa" in names:
         suffix = path.suffix.lower()
         if suffix in IWORK_BUNDLE_SUFFIXES:

@@ -8,7 +8,7 @@ Findings from a code audit (2026-09-06), grouped by priority. Each verified by r
 
 ## Should fix
 
-(none currently tracked)
+- **Config tests depend on `.ocr-mode` being absent** — `tests/test_config.py::TestSettingsIgnoreEnv` asserts `ocr_backend == "tesseract"` and `ollama_vision_model == "ollama:moondream"`, but `config.py` folds `.ocr-mode` into those defaults at import. After `make build ollama` both tests fail on a clean tree. They should patch the module constants instead of asserting the shipped default.
 
 ## Worth a look
 

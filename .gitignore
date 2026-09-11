@@ -12,3 +12,4 @@ build/
 *.md.bak
 .DS_Store
 /telemetry/
+.env

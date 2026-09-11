@@ -185,10 +185,10 @@ class TestPdfOcrFallback:
         llm_fn.assert_called_once()
         assert pages == [(1, "vision text")]
 
-    def test_extract_pages_hybrid_skips_llm_when_tesseract_has_text(
+    def test_extract_pages_escalates_low_confidence_tesseract_to_llm(
         self, tmp_path: Path
     ) -> None:
-        """extract_pages() — low-confidence nonempty Tesseract does not call ocr_fn."""
+        """extract_pages() — low-confidence Tesseract is re-OCR'd by vision."""
         empty = _make_pdf(tmp_path / "scan.pdf", [""])
         llm_fn = MagicMock(return_value="vision text")
 
@@ -196,8 +196,9 @@ class TestPdfOcrFallback:
             patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
             patch(
-                "twomarkdown.converter.ocr.conversion_config.ocr_confidence_min",
-                60.0,
+                "twomarkdown.converter.pdf_ocr.pdf_ocr_config."
+                "pdf_ocr_llm_min_confidence",
+                75.0,
             ),
             patch(
                 "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
@@ -206,7 +207,57 @@ class TestPdfOcrFallback:
         ):
             pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
 
+        llm_fn.assert_called_once()
+        assert pages == [(1, "vision text")]
+
+    def test_extract_pages_keeps_confident_tesseract_without_llm(
+        self, tmp_path: Path
+    ) -> None:
+        """extract_pages() — confident Tesseract text is kept, ocr_fn unused."""
+        empty = _make_pdf(tmp_path / "scan.pdf", [""])
+        llm_fn = MagicMock(return_value="vision text")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.pdf_ocr.pdf_ocr_config."
+                "pdf_ocr_llm_min_confidence",
+                75.0,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("clean printed text", 92.0),
+            ),
+        ):
+            pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
+
         llm_fn.assert_not_called()
+        assert pages == [(1, "clean printed text")]
+
+    def test_extract_pages_falls_back_to_tesseract_when_llm_returns_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """extract_pages() — an empty vision result keeps the Tesseract text."""
+        empty = _make_pdf(tmp_path / "scan.pdf", [""])
+        llm_fn = MagicMock(return_value="")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.pdf_ocr.pdf_ocr_config."
+                "pdf_ocr_llm_min_confidence",
+                75.0,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("blurry exam text", 10.0),
+            ),
+        ):
+            pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
+
+        llm_fn.assert_called_once()
         assert pages == [(1, "blurry exam text")]
 
     def test_extract_pages_stops_remaining_pages_when_cancelled(
@@ -228,3 +279,88 @@ class TestPdfOcrFallback:
 
         assert len(calls) == 1
 
+
+
+class TestScrambledTextDetection:
+    """Equation-object slides extract as long but shredded token soup."""
+
+    def test_detects_scrambled_equation_soup(self) -> None:
+        """is_scrambled_text() — loose single characters are not readable text."""
+        soup = "Tol x f x x Tol x f Tol x x k k k k k k < + - < < - + + + + ) ( , ) ("
+        assert pdf_ocr.is_scrambled_text(soup) is True
+
+    def test_accepts_ordinary_prose(self) -> None:
+        """is_scrambled_text() — normal Spanish prose is not flagged."""
+        prose = (
+            "Determinar un intervalo tal que la funcion tenga distinto signo en "
+            "los extremos, y repetir el proceso hasta conseguir un intervalo de "
+            "longitud tan pequena como se desee para el metodo de biseccion."
+        )
+        assert pdf_ocr.is_scrambled_text(prose) is False
+
+    def test_ignores_short_fragments(self) -> None:
+        """is_scrambled_text() — too few tokens to judge means no."""
+        assert pdf_ocr.is_scrambled_text("a b c d") is False
+
+    def test_compose_drops_scrambled_native_when_ocr_exists(
+        self, tmp_path: Path
+    ) -> None:
+        """compose_pdf_markdown() — OCR replaces a shredded text layer."""
+        soup = " ".join(["x", "k", "f", "(", ")", "+", "-", "<"] * 8)
+        pdf = _make_pdf(tmp_path / "soup.pdf", [soup])
+        composed = pdf_ocr.compose_pdf_markdown(
+            pdf_path=pdf,
+            markitdown_text="",
+            ocr_pages=[(1, "Formula iterativa de Newton")],
+            tables=[],
+        )
+        assert "Formula iterativa de Newton" in composed
+        assert "### OCR" in composed
+
+    def test_no_markitdown_duplicate_when_pages_extracted(
+        self, tmp_path: Path
+    ) -> None:
+        """compose_pdf_markdown() — a healthy page tree is not appended twice."""
+        # Several pages, so the extracted tree is comfortably over the thin-native
+        # threshold that still allows the MarkItDown rescue.
+        line = "Metodo de biseccion sobre el intervalo dado y su convergencia."
+        pdf = _make_pdf(tmp_path / "ok.pdf", [line] * 5)
+        composed = pdf_ocr.compose_pdf_markdown(
+            pdf_path=pdf,
+            markitdown_text=(line + " ") * 6,
+            ocr_pages=[],
+            tables=[],
+        )
+        assert "## Document (MarkItDown)" not in composed
+
+    def test_markitdown_still_rescues_an_empty_page_tree(self, tmp_path: Path) -> None:
+        """compose_pdf_markdown() — the fallback survives for unreadable PDFs."""
+        pdf = _make_pdf(tmp_path / "empty.pdf", [""])
+        composed = pdf_ocr.compose_pdf_markdown(
+            pdf_path=pdf,
+            markitdown_text="Recovered by MarkItDown " * 20,
+            ocr_pages=[],
+            tables=[],
+        )
+        assert "Recovered by MarkItDown" in composed
+
+    def test_scrambled_page_goes_straight_to_the_vision_model(
+        self, tmp_path: Path
+    ) -> None:
+        """extract_pages() — a shredded page skips Tesseract's confidence gate."""
+        soup = " ".join(["x", "k", "f", "(", ")", "+", "-", "<"] * 8)
+        pdf = _make_pdf(tmp_path / "soup.pdf", [soup])
+        llm_fn = MagicMock(return_value="Tasas de convergencia")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("confident prose, shredded maths", 95.0),
+            ),
+        ):
+            pages = pdf_ocr.extract_pages(pdf, ocr_fn=llm_fn)
+
+        llm_fn.assert_called_once()
+        assert pages == [(1, "Tasas de convergencia")]

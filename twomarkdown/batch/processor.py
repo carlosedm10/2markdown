@@ -21,6 +21,7 @@ from twomarkdown.batch.walker import discover_files
 from twomarkdown.config import (
     SKIP_DIR_NAMES,
     conversion_config,
+    figure_config,
     iwork_config,
     llm_config,
 )
@@ -231,6 +232,17 @@ def _convert_pdf_with_ocr(
     return composed
 
 
+def _maybe_xmind(path: Path) -> str | None:
+    if _effective_suffix(path) != ".xmind":
+        return None
+    from twomarkdown.converter import xmind
+
+    if not xmind.is_xmind(path):
+        return None
+    with span("xmind"):
+        return xmind.convert_xmind(path)
+
+
 def _maybe_excel(path: Path) -> str | None:
     suffix = _effective_suffix(path)
     if suffix not in {".xlsx", ".xlsm"}:
@@ -319,12 +331,19 @@ def _convert_source_to_markdown(
             p, ocr_fn=engine, show_progress=show_progress, cancel=cancel
         )
         with span("iwork"):
-            return iwork.convert_bundle(source_path, convert_pdf=convert_pdf)
+            return iwork.convert_bundle(
+                source_path, convert_pdf=convert_pdf, ocr_fn=engine
+            )
 
     if ereader.is_ereader(source_path):
         set_converter("ereader")
         with span("ereader"):
             return ereader.convert_ereader(source_path)
+
+    native = _maybe_xmind(source_path)
+    if native is not None:
+        set_converter("xmind")
+        return native
 
     native = _maybe_eml(source_path)
     if native is not None:
@@ -444,6 +463,69 @@ def _skip_ocr_if_cancelled(
     return _wrapped
 
 
+def _describe_figure_cached(
+    image_bytes: bytes, cache: OcrCache | None, language: str | None
+) -> str:
+    if cache is not None:
+        hit = cache.get(image_bytes)
+        if hit is not None:
+            note("figure.cache_hit")
+            return hit
+    from twomarkdown.converter.ocr import describe_image_bytes
+
+    text = describe_image_bytes(image_bytes, language=language)
+    if cache is not None:
+        cache.put(image_bytes, text)
+    return text
+
+
+def _inline_pdf_figures(
+    markdown: str,
+    source_path: Path,
+    *,
+    assets_dir: Path,
+    output_root: Path,
+    output_dir: Path,
+    cancel: threading.Event | None,
+) -> tuple[str, bool]:
+    """Render figure regions, describe them, and place each under its own page."""
+    from twomarkdown.converter import figures as figures_mod
+
+    found = figures_mod.extract_figures(source_path, assets_dir)
+    if not found:
+        return markdown, False
+
+    # Describe figures in the document's own language, not the model's default.
+    from twomarkdown.language import guess_language
+
+    language = guess_language(markdown)
+
+    describe = figure_config.describe_figures_llm and llm_config.llm_enabled
+    cache: OcrCache | None = None
+    if describe:
+        cache = OcrCache(
+            output_dir / ".2markdown-figure-cache",
+            backend="figure",
+            model=llm_config.ollama_vision_model,
+        )
+
+    blocks_by_page: dict[int, list[str]] = {}
+    for figure in found:
+        description = ""
+        if describe and (cancel is None or not cancel.is_set()):
+            try:
+                description = _describe_figure_cached(
+                    figure.path.read_bytes(), cache, language
+                ).strip()
+            except Exception as exc:
+                logger.debug("Figure description failed %s: %s", figure.path, exc)
+        blocks_by_page.setdefault(figure.page_number, []).append(
+            figures_mod.figure_block(figure, description, output_root=output_root)
+        )
+
+    return figures_mod.insert_figure_blocks(markdown, blocks_by_page), True
+
+
 def _convert_one(
     source_path: Path,
     *,
@@ -484,21 +566,39 @@ def _convert_one(
 
     suffix = _effective_suffix(source_path)
     output_md = _mirror_output_path(source_path, input_dir, output_dir)
-    if suffix == ".pdf" and conversion_config.extract_assets:
-        try:
-            from twomarkdown.converter.assets import (
-                extract_pdf_images,
-                markdown_asset_index,
-            )
+    if suffix == ".pdf":
+        assets_dir = output_md.parent / f"{output_md.stem}_assets"
+        inlined = False
+        if figure_config.figures_enabled:
+            try:
+                with span("pdf.figures"):
+                    markdown, inlined = _inline_pdf_figures(
+                        markdown,
+                        source_path,
+                        assets_dir=assets_dir,
+                        output_root=output_md.parent,
+                        output_dir=output_dir,
+                        cancel=cancel,
+                    )
+            except Exception as exc:
+                logger.debug("PDF figure pass skipped: %s", exc)
 
-            assets_dir = output_md.parent / f"{output_md.stem}_assets"
-            with span("pdf.assets"):
-                extracted = extract_pdf_images(source_path, assets_dir)
-            extra = markdown_asset_index(extracted, output_root=output_md.parent)
-            if extra and extra.strip():
-                markdown = f"{markdown.rstrip()}\n\n{extra.strip()}\n"
-        except Exception as exc:
-            logger.debug("PDF asset extract skipped: %s", exc)
+        # Figures already carry the page images inline; the flat trailing index
+        # only duplicates them, so keep it for the no-figure case.
+        if not inlined and conversion_config.extract_assets:
+            try:
+                from twomarkdown.converter.assets import (
+                    extract_pdf_images,
+                    markdown_asset_index,
+                )
+
+                with span("pdf.assets"):
+                    extracted = extract_pdf_images(source_path, assets_dir)
+                extra = markdown_asset_index(extracted, output_root=output_md.parent)
+                if extra and extra.strip():
+                    markdown = f"{markdown.rstrip()}\n\n{extra.strip()}\n"
+            except Exception as exc:
+                logger.debug("PDF asset extract skipped: %s", exc)
 
     _cancelled(cancel)
     source_rel = _source_relpath(source_path, input_dir, output_dir)

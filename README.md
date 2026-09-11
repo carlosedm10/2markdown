@@ -24,7 +24,7 @@ make up                 # optional: keep backend container + host Ollama running
 | Command | OCR engine | Extra |
 |---------|------------|-------|
 | `make build` | **Tesseract** (default) | Nothing else to install |
-| `make build ollama` | **Ollama** (`moondream`) | Installs/pulls the vision model on host Ollama (~2 GB RAM) |
+| `make build ollama` | **Ollama** (`qwen2.5vl:7b` recommended) | Installs/pulls the vision model on host Ollama |
 
 > Make does not support `--flags`. Use `make build ollama` (two words), not `make build --ollama`.
 
@@ -91,6 +91,7 @@ MarkItDown `[all]`: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.txt`, 
 | Format | Notes |
 |--------|-------|
 | `.epub` | Spine order, title/author metadata |
+| `.xmind` | Mind maps: `content.json` topic tree as nested Markdown lists |
 | `.fb2` | FictionBook sections and paragraphs |
 | `.mobi`, `.azw`, `.azw3` | Unpacked HTML → markdown chapters |
 | `.eml` | Native RFC 822 (From/To/Subject + body) |
@@ -103,7 +104,7 @@ Plain `.zip` archives are unpacked into the output tree and converted (Office/iW
 
 | Format | Notes |
 |--------|-------|
-| `.pages`, `.key`, `.numbers` | Requires `preview.pdf` inside the bundle. Missing preview → that file fails, the batch continues. |
+| `.pages`, `.key`, `.numbers` | Uses `preview.pdf` when present. iCloud-synced bundles often ship only `preview.jpg`; those recover the **first page only**, under a "vista previa parcial" banner. Export a PDF from the Apple app for the full document. |
 
 Numbers is the rendered preview, not per-sheet GFM tables. To keep layout, export PDF from the Apple app first if the bundle has no preview.
 
@@ -113,15 +114,41 @@ Local audio: `make uv-sync EXTRA=audio-whisper` transcribes `.wav`/`.mp3` with C
 
 Video files still soft-fail.
 
+## Figures, plots and diagrams
+
+Course slides draw most figures as **vector** content, so they are invisible to embedded-image extraction and the text layer keeps only stray axis ticks. For every PDF page, 2markdown clusters vector strokes and raster images into figure regions, renders each one to PNG at `figure_dpi`, and places it inline under its own `## Page N` heading:
+
+```markdown
+### Figura 39.1
+
+![Figura p39-1](Tema 2_assets/Tema 2-fig-p39-1.png)
+
+> **Figura (descripción generada):** Esquema de un circuito con seis resistencias…
+```
+
+The description needs a vision model (`make build ollama`); without one the crop is still rendered and linked. Descriptions are generated, not transcribed — they are marked as such and cached by image content, so a diagram repeated across slides costs one call. Regions that are mostly prose (a bordered theorem box) are rejected, as are near-full-page regions. Tuning lives under `FigureConfig` in `twomarkdown/config.py`; set `figures_enabled = False` to fall back to the flat `## Embedded images` index.
+
 ## Scanned PDFs
 
 OCR is **per page**. For each page, PyMuPDF extracts native text; if a page has fewer than `pdf_ocr_min_chars` characters, that page is rasterized and OCR'd. Mixed PDFs (digital text + scans) OCR only the weak pages. Output uses `## Page N` with an `### OCR` subsection for scanned pages (prose, not fenced code). Tables are extracted when possible (`### Table (page N)`).
 
-PDF page OCR is **Tesseract-first**: if Tesseract returns any usable text, that text is kept and Ollama is not called for the page. Ollama vision runs only when the page is empty (and you built with `make build ollama`). Standalone images and markdown embeds still use hybrid OCR (low Tesseract confidence → vision). Vision calls are serialized (one in flight). A per-file timeout cancels remaining pages on that PDF.
+PDF page OCR is **Tesseract-first, escalating on confidence**: Tesseract runs, and if its mean word confidence is below `pdf_ocr_llm_min_confidence` (75), the page is re-OCR'd by the vision model (when you built with `make build ollama`). If the model returns nothing, the Tesseract text is kept. This matters for handwriting, where Tesseract returns confident nonsense rather than an empty string. Standalone images and markdown embeds use the same hybrid rule. Vision calls are serialized (one in flight). A per-file timeout cancels remaining pages on that PDF.
 
 For large archives, use Tesseract: `make build` then `make process INPUT=...` (not `make build ollama`), unless you want vision on empty pages only. `OCR_BACKEND=tesseract` on `make process` also forces Tesseract for that run. Four workers plus per-page Ollama will stampede the host GPU and can OOM the converter (Docker Error 137).
 
-**Ollama vision models:** The default `moondream` fits machines with ~8 GB RAM. For higher quality on scans (if you have ~11 GB+ free), run `make build ollama OLLAMA_MODEL=llama3.2-vision:11b` (that also updates `.ocr-mode`).
+**Ollama vision models:** model choice dominates quality on handwriting, equations and figures — it matters far more than DPI or language settings.
+
+| Model | RAM | Verdict on course material |
+|---|---|---|
+| `moondream` (1.8B) | ~2 GB | Too small. Avoid for maths or tables. |
+| `gemma3:4b` | ~4 GB | Reads clean print, but falls into repetition loops on dense pages. |
+| **`qwen2.5vl:7b`** | ~8 GB | **Recommended.** Transcribes handwriting, emits LaTeX for equations, recovers ligatures the PDF text layer drops. |
+
+```bash
+make build ollama OLLAMA_MODEL=qwen2.5vl:7b
+```
+
+Vision OCR is tens of seconds per page, so `file_timeout_sec` in `twomarkdown/config.py` rises to 1800 s automatically when the Ollama backend is selected.
 
 ## Configuration
 
@@ -147,7 +174,7 @@ Feature flags and tuning live in [`twomarkdown/config.py`](twomarkdown/config.py
 | `pdf_ocr_min_chars` | `50` | Per-page threshold for scanned-PDF fallback |
 | `pdf_ocr_dpi` | `200` | Rasterization quality for page OCR |
 | `ollama_base_url` | `http://host.docker.internal:11434/v1` | Host Ollama API (Docker → host) |
-| `ollama_vision_model` | `ollama:moondream` | Vision model (`make build ollama OLLAMA_MODEL=…`) |
+| `ollama_vision_model` | `ollama:moondream` | Vision model; prefer `qwen2.5vl:7b` (`make build ollama OLLAMA_MODEL=…`) |
 | `iwork_enabled` | `true` | Convert `.pages` / `.key` / `.numbers` via `preview.pdf` |
 
 Credentials belong in `.env` and are loaded by `Secrets` in `twomarkdown/config.py` (empty until a feature needs a key).
