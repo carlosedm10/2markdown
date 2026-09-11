@@ -32,10 +32,12 @@ help:
 	@echo "  make down                     Stop Docker containers (compose down --remove-orphans)"
 	@echo "  make restart                  Restart the backend container"
 	@echo "  make stop-ollama              Stop host Ollama"
-	@echo "  make export-iwork INPUT=\"/path\"  Export .pages/.key/.numbers to PDF (host, needs Pages)"
+	@echo "  make export-iwork INPUT=\"/path\"  Pre-export iWork via Pages.app (only if LibreOffice fails)"
 	@echo "  make process INPUT=\"/path\" [VERBOSE=1] [DRY_RUN=1] [WORKERS=n]"
 	@echo "            [FORCE=1] [OCR_BACKEND=tesseract|ollama] [OUTPUT=/path]"
-	@echo "            [NO_OCR=1] [EMIT_CHUNKS=1]"
+	@echo "            [NO_OCR=1] [EMIT_CHUNKS=1] [SKIP_IWORK_EXPORT=1]"
+	@echo "  make validate INPUT=\"/path_2markdown\"   Deterministic quality gate over converted markdown"
+	@echo "  make judge INPUT=\"/path_2markdown\"      LLM review queue for implausible maths (needs Ollama)"
 	@echo ""
 	@echo "Backend package management:"
 	@echo "  make uv-lock                  Refresh uv.lock"
@@ -134,6 +136,9 @@ process:
 		OUTPUT_ABS="$$WORK_DIR/$${STEM}_2markdown"; \
 	fi; \
 	mkdir -p "$$OUTPUT_ABS"; \
+	if [ "$(IWORK_EXPORT)" = "1" ]; then \
+		python3 scripts/export_iwork.py "$$INPUT_ABS" --if-any; \
+	fi; \
 	if python3 scripts/set_ocr_mode.py is-llm || [ "$(OCR_BACKEND)" = "ollama" ]; then \
 		python3 scripts/ollama_host.py ensure; \
 	fi; \
@@ -278,3 +283,25 @@ export-iwork:
 	@echo ":: export-iwork: host"
 	@test -n "$(INPUT)" || (echo "Usage: make export-iwork INPUT=\"/path/to/folder\"" && exit 1)
 	python3 scripts/export_iwork.py "$(INPUT)" $(if $(FORCE),--force,) $(if $(DRY_RUN),--dry-run,)
+
+# ------------------------------ Quality gates ------------------------------ #
+.PHONY: validate judge
+
+# Deterministic checks over a converted output folder. No model, no network.
+validate:
+	@echo ":: validate: backend"
+	@test -n "$(INPUT)" || (echo 'Usage: make validate INPUT="/path/to/output_2markdown"' && exit 1)
+	@set -e; \
+	INPUT_ABS=$$(cd "$(INPUT)" && pwd); \
+	docker compose run --rm -v "$$INPUT_ABS:$$INPUT_ABS" $(SERVICE) \
+		uv run python -m twomarkdown.validate "$$INPUT_ABS"
+
+# LLM review queue: flags mathematically implausible passages. Writes review-queue.md.
+judge:
+	@echo ":: judge: backend"
+	@test -n "$(INPUT)" || (echo 'Usage: make judge INPUT="/path/to/output_2markdown"' && exit 1)
+	@python3 scripts/ollama_host.py ensure
+	@set -e; \
+	INPUT_ABS=$$(cd "$(INPUT)" && pwd); \
+	docker compose run --rm -v "$$INPUT_ABS:$$INPUT_ABS" $(SERVICE) \
+		uv run python -m twomarkdown.judge "$$INPUT_ABS" $(if $(JUDGE_MODEL),--model $(JUDGE_MODEL),)

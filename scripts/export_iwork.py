@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SUFFIX_TO_APP = {
@@ -28,36 +29,73 @@ SUFFIX_TO_APP = {
 }
 
 # The app name must be a literal inside `tell`: with a variable, AppleScript cannot
-# resolve the app's terminology and `as PDF` fails to compile. So the name is
-# interpolated into the template while paths stay as arguments.
+# resolve the app's terminology and `as PDF` fails to compile. The app also needs
+# `activate` and a moment before the document appears — `open` itself returns
+# `missing value`, and `front document` is not yet set when it returns.
 APPLESCRIPT_TEMPLATE = """
 on run argv
     set srcPath to item 1 of argv
     set outPath to item 2 of argv
     tell application "{app}"
+        activate
         open (POSIX file srcPath)
-        -- `open` returns missing value here, so take the document it just fronted.
-        repeat 60 times
-            if (count of documents) > 0 then exit repeat
+        set waited to 0
+        repeat until (count of documents) > 0
             delay 0.5
+            set waited to waited + 0.5
+            if waited > 60 then error "document never opened: " & srcPath
         end repeat
-        set doc to front document
-        export doc to (POSIX file outPath) as PDF
-        close doc saving no
+        set theDoc to document 1
+        export theDoc to (POSIX file outPath) as PDF
+        close theDoc saving no
     end tell
 end run
 """
 
 
+# Driving a GUI app is inherently racy: exporting back-to-back, the next `open`
+# can arrive while the app is still closing the previous document, and it answers
+# "Operation not permitted". A short settle plus a retry clears it.
+EXPORT_ATTEMPTS = 3
+SETTLE_SECONDS = 1.5
+
+
+def app_is_available(app: str) -> bool:
+    """True when the iWork app is installed and scriptable on this Mac."""
+    try:
+        subprocess.run(
+            ["osascript", "-e", f'tell application "{app}" to get version'],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def export_one(source: Path, target: Path, app: str, *, timeout: int = 180) -> None:
-    subprocess.run(
-        ["osascript", "-", str(source), str(target)],
-        input=APPLESCRIPT_TEMPLATE.format(app=app),
-        text=True,
-        check=True,
-        capture_output=True,
-        timeout=timeout,
-    )
+    last: Exception | None = None
+    for attempt in range(EXPORT_ATTEMPTS):
+        if attempt:
+            time.sleep(SETTLE_SECONDS * (attempt + 1))
+        try:
+            subprocess.run(
+                ["osascript", "-", str(source), str(target)],
+                input=APPLESCRIPT_TEMPLATE.format(app=app),
+                text=True,
+                check=True,
+                capture_output=True,
+                timeout=timeout,
+            )
+            if target.exists():
+                return
+            last = RuntimeError("export reported success but produced no file")
+        except subprocess.CalledProcessError as exc:
+            last = exc
+    assert last is not None
+    raise last
 
 
 def main() -> int:
@@ -65,9 +103,16 @@ def main() -> int:
     parser.add_argument("root", type=Path, help="file or folder to scan")
     parser.add_argument("--force", action="store_true", help="re-export existing PDFs")
     parser.add_argument("--dry-run", action="store_true", help="list without exporting")
+    parser.add_argument(
+        "--if-any",
+        action="store_true",
+        help="stay silent and succeed when there is nothing to export (used by make process)",
+    )
     args = parser.parse_args()
 
     if sys.platform != "darwin":
+        if args.if_any:
+            return 0
         print("This exporter needs macOS with Pages/Keynote/Numbers installed.")
         return 2
 
@@ -87,13 +132,31 @@ def main() -> int:
         )
 
     if not candidates:
-        print("No iWork documents found.")
+        if not args.if_any:
+            print("No iWork documents found.")
         return 0
 
+    pending = [
+        p for p in candidates if args.force or not p.with_suffix(".pdf").exists()
+    ]
+    if args.if_any:
+        if not pending:
+            return 0
+        print(f":: export-iwork: {len(pending)} iWork document(s) -> PDF")
+
     exported = skipped = failed = 0
+    missing_apps: set[str] = set()
+    checked: dict[str, bool] = {}
     for source in candidates:
         target = source.with_suffix(".pdf")
         app = SUFFIX_TO_APP[source.suffix.lower()]
+
+        if app not in checked:
+            checked[app] = args.dry_run or app_is_available(app)
+        if not checked[app]:
+            missing_apps.add(app)
+            failed += 1
+            continue
 
         if target.exists() and not args.force:
             skipped += 1
@@ -107,6 +170,8 @@ def main() -> int:
         try:
             export_one(source, target, app)
             exported += 1
+            # Let the app settle before the next document.
+            time.sleep(SETTLE_SECONDS)
         except subprocess.TimeoutExpired:
             print(f"  TIMEOUT: {source}", file=sys.stderr)
             failed += 1
@@ -117,10 +182,15 @@ def main() -> int:
 
     verb = "would export" if args.dry_run else "exported"
     print(f"\n{verb}={exported} skipped(existing)={skipped} failed={failed}")
-    if failed:
-        print("Grant Terminal permission to control Pages/Keynote/Numbers in")
-        print("System Settings > Privacy & Security > Automation, then retry.")
-    return 1 if failed else 0
+    if missing_apps:
+        names = ", ".join(sorted(missing_apps))
+        print(f"Not installed or not scriptable on this Mac: {names}.")
+        print("Install it from the App Store, or rely on the LibreOffice route")
+        print("inside the container (make process handles iWork without this script).")
+    elif failed:
+        print("If macOS blocked the automation, allow Terminal to control")
+        print("Pages/Keynote/Numbers in System Settings > Privacy & Security > Automation.")
+    return 0 if args.if_any else (1 if failed else 0)
 
 
 if __name__ == "__main__":

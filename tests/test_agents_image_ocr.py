@@ -72,3 +72,27 @@ class TestThreadLocalAgents:
         client = _vision_http_client()
         pool = client._transport._pool
         assert pool._max_keepalive_connections == 0
+
+
+class TestStripInventedImageLinks:
+    def test_removes_a_made_up_image_link(self) -> None:
+        """strip_invented_image_links() — a model-invented link is dropped."""
+        from twomarkdown.agents.image_ocr import strip_invented_image_links
+
+        out = strip_invented_image_links("Antes ![](convergencia_lineal.png) despues")
+        assert "convergencia_lineal.png" not in out
+        assert "Antes" in out and "despues" in out
+
+    def test_keeps_alt_text_as_caption(self) -> None:
+        """strip_invented_image_links() — alt text survives as plain text."""
+        from twomarkdown.agents.image_ocr import strip_invented_image_links
+
+        out = strip_invented_image_links("![Figura 3](fig3.png)")
+        assert out.strip() == "Figura 3"
+
+    def test_leaves_ordinary_text_alone(self) -> None:
+        """strip_invented_image_links() — prose and maths are untouched."""
+        from twomarkdown.agents.image_ocr import strip_invented_image_links
+
+        text = "La funcion $f(x)$ es par. Ver [enlace](http://x) normal."
+        assert strip_invented_image_links(text) == text

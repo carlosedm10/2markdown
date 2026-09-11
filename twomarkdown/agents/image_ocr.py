@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 
 import httpx
@@ -58,6 +59,25 @@ def strip_wrapping_fence(text: str) -> str:
     if any(line.lstrip().startswith("```") for line in inner):
         return text.strip()
     return "\n".join(inner).strip()
+
+
+# The model sees a picture, not a filesystem, so any ![alt](path) it writes points
+# at a file that does not exist. The pipeline adds the real figure links itself.
+_INVENTED_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+
+
+def strip_invented_image_links(text: str) -> str:
+    """Drop markdown image links a vision model invented during transcription.
+
+    Keeps the alt text when it carries a caption, so "![Figura 3](fig3.png)"
+    degrades to "Figura 3" rather than vanishing.
+    """
+
+    def _replace(match: re.Match) -> str:
+        alt = match.group(1).strip()
+        return alt if alt else ""
+
+    return _INVENTED_IMAGE_RE.sub(_replace, text)
 
 
 def _vision_http_client() -> httpx.AsyncClient:
@@ -181,7 +201,7 @@ def ocr_image_bytes_llm(image_bytes: bytes, *, mime_type: str = "image/png") -> 
                     content,
                 ],
             )
-        return strip_wrapping_fence(result.output or "")
+        return strip_invented_image_links(strip_wrapping_fence(result.output or ""))
     except ModelAPIError as exc:
         logger.warning("Vision OCR API error: %s", exc)
         return ""

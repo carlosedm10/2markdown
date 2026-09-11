@@ -36,6 +36,9 @@ def _cell_text(value: object) -> str:
 # one-cell table and the page text gets duplicated inside it. Real tables have
 # several populated columns and short cells.
 MAX_CELL_CHARS = 200
+# A real table is densely populated; a bulleted list that LibreOffice laid out in
+# columns leaves most cells empty. Measured: real tables ~92% full, list layouts ~25%.
+MIN_CELL_FILL_RATIO = 0.5
 MIN_POPULATED_COLUMNS = 2
 MIN_ROWS = 2
 MAX_PAGE_AREA_RATIO = 0.8
@@ -51,9 +54,18 @@ def _populated_columns(rows: list[list[str]]) -> int:
     return count
 
 
+def _cell_fill_ratio(rows: list[list[str]]) -> float:
+    cells = [cell for row in rows for cell in row]
+    if not cells:
+        return 0.0
+    return sum(1 for cell in cells if cell) / len(cells)
+
+
 def is_real_table(rows: list[list[str]], *, area_ratio: float | None = None) -> bool:
-    """Reject slide frames and figure borders that find_tables() reports as tables."""
+    """Reject slide frames, figure borders and list layouts reported as tables."""
     if len(rows) < MIN_ROWS:
+        return False
+    if _cell_fill_ratio(rows) < MIN_CELL_FILL_RATIO:
         return False
     if _populated_columns(rows) < MIN_POPULATED_COLUMNS:
         return False

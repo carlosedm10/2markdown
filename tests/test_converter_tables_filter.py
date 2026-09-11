@@ -32,3 +32,22 @@ class TestIsRealTable:
         rows = [["A", "B"], ["1", "2"]]
         assert is_real_table(rows, area_ratio=0.95) is False
         assert is_real_table(rows, area_ratio=0.4) is True
+
+    def test_rejects_a_sparse_list_layout(self) -> None:
+        """is_real_table() — a bulleted list laid out in columns is mostly empty."""
+        rows = [
+            ["Componentes:", "", "", "", "", ""],
+            ["-", "Terminal", "", "(host)", "", "Dispositivo"],
+            ["", "Nodo", "(router)", "", "", ""],
+            ["", "Linea", "", "(link)", "", ""],
+        ]
+        assert is_real_table(rows) is False
+
+    def test_accepts_a_densely_filled_table(self) -> None:
+        """is_real_table() — a real grid is populated in nearly every cell."""
+        rows = [
+            ["Curso", "Asignatura", "Nota"],
+            ["1", "Fisica I", "6.1"],
+            ["1", "Matematicas I", "9.5"],
+        ]
+        assert is_real_table(rows) is True

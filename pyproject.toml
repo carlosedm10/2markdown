@@ -17,6 +17,7 @@ dependencies = [
     "ebooklib>=0.20",
     "markdownify>=0.13.0",
     "mobi>=0.3.3",
+    "numbers-parser>=4.19.0",
 ]
 
 [project.optional-dependencies]

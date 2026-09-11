@@ -213,6 +213,18 @@ def _is_fence_line(line: str) -> bool:
     return line.lstrip().startswith("```")
 
 
+_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|>\s)")
+
+
+def _is_list_line(line: str) -> bool:
+    """List items and blockquotes are structure, not prose to be reflowed.
+
+    Without this, an indented outline (an XMind mind map, or a model's bulleted
+    transcription) is joined into a single unreadable paragraph.
+    """
+    return bool(_LIST_ITEM_RE.match(line))
+
+
 def group_broken_paragraphs(text: str) -> str:
     """Join single newlines inside prose; preserve paragraph breaks and structure."""
     lines = text.split("\n")
@@ -241,7 +253,7 @@ def group_broken_paragraphs(text: str) -> str:
             out.append("")
             continue
 
-        if _is_heading_line(line) or _is_table_line(line):
+        if _is_heading_line(line) or _is_table_line(line) or _is_list_line(line):
             flush_prose()
             out.append(line)
             continue

@@ -232,6 +232,22 @@ def _convert_pdf_with_ocr(
     return composed
 
 
+def _maybe_numbers(path: Path) -> str | None:
+    if _effective_suffix(path) != ".numbers":
+        return None
+    from twomarkdown.converter import numbers_doc
+
+    if not numbers_doc.is_numbers_doc(path):
+        return None
+    try:
+        with span("numbers"):
+            return numbers_doc.convert_numbers(path)
+    except Exception as exc:
+        # Fall through to the LibreOffice/PDF route rather than failing the file.
+        logger.warning("numbers-parser failed for %s, falling back: %s", path, exc)
+        return None
+
+
 def _maybe_xmind(path: Path) -> str | None:
     if _effective_suffix(path) != ".xmind":
         return None
@@ -324,6 +340,13 @@ def _convert_source_to_markdown(
 ) -> str:
     suffix = _effective_suffix(source_path)
     engine = ocr_fn if ocr_fn is not None else _get_ocr_fn()
+
+    # .numbers before the generic iWork route: the native parser keeps cells and
+    # formulas, while the LibreOffice/PDF path renders a picture of the grid.
+    native = _maybe_numbers(source_path)
+    if native is not None:
+        set_converter("numbers")
+        return native
 
     if iwork_config.iwork_enabled and iwork.is_iwork_bundle(source_path):
         set_converter("iwork")
@@ -517,6 +540,11 @@ def _inline_pdf_figures(
                 description = _describe_figure_cached(
                     figure.path.read_bytes(), cache, language
                 ).strip()
+                # Figures are inlined after the clean pass, so the model's
+                # \( .. \) delimiters would otherwise reach the .md unconverted.
+                from twomarkdown.converter.clean import normalize_latex_markup
+
+                description = normalize_latex_markup(description).strip()
             except Exception as exc:
                 logger.debug("Figure description failed %s: %s", figure.path, exc)
         blocks_by_page.setdefault(figure.page_number, []).append(

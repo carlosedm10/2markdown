@@ -55,8 +55,11 @@ def convert_legacy_office(path: Path) -> str:
 
     with tempfile.TemporaryDirectory() as tmp:
         out_dir = Path(tmp)
+        # Private profile per run: parallel workers otherwise collide on the
+        # shared LibreOffice user profile and one of them fails.
         cmd = [
             soffice,
+            f"-env:UserInstallation=file://{out_dir / 'lo-profile'}",
             "--headless",
             "--convert-to",
             "html",
