@@ -153,7 +153,98 @@ def extract_pages(
     return results
 
 
+def _word_gaps(words: list) -> tuple[dict, list[float]]:
+    """Group words into lines and measure each inter-word gap, in font heights."""
+    by_line: dict = {}
+    for w in words:
+        by_line.setdefault((w[5], w[6]), []).append(w)
+    gaps: list[float] = []
+    for line in by_line.values():
+        line.sort(key=lambda w: w[0])
+        for a, b in zip(line, line[1:], strict=False):
+            height = a[3] - a[1]
+            if height > 0:
+                gaps.append((b[0] - a[2]) / height)
+    return by_line, sorted(gaps)
+
+
+def _quantile(values: list[float], q: float) -> float:
+    return values[min(int(len(values) * q), len(values) - 1)]
+
+
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def _short_token_ratio(text: str) -> float | None:
+    """Share of very short word tokens — the symptom of mid-word splitting."""
+    tokens = _WORD_RE.findall(text or "")
+    if len(tokens) < 20:
+        return None
+    return sum(1 for t in tokens if len(t) <= 4) / len(tokens)
+
+
+def repair_fragmented_page_text(page: fitz.Page) -> str | None:
+    """Rejoin words that a renderer split mid-glyph, or None if the page is fine.
+
+    LibreOffice renders some Keynote text with per-character positioning, so the
+    extractor reads "Eval uaci ón de Met odol ogí as". The spurious gaps are
+    narrower than real spaces, giving two distinct gap populations; an ordinary
+    page has only one. Detect that split, then join across the narrow gaps.
+
+    Only spaces are removed — no character is ever changed — so the text cannot
+    gain a meaning the page did not have.
+    """
+    try:
+        words = page.get_text("words")
+    except Exception:
+        return None
+    if len(words) < pdf_ocr_config.pdf_fragment_min_words:
+        return None
+
+    # Guard 1, the symptom: real prose is not mostly three-letter fragments.
+    symptom = _short_token_ratio(page.get_text())
+    if symptom is None or symptom < pdf_ocr_config.pdf_fragment_short_tokens:
+        return None
+    return rejoin_words(words)
+
+
+def rejoin_words(words: list) -> str | None:
+    """Join words split mid-glyph, from PyMuPDF "words" tuples. None if not needed.
+
+    Kept separate from the page so the rule is testable without rendering a PDF:
+    PyMuPDF merges very close pieces during extraction, so a synthetic fixture
+    cannot reproduce the condition this repairs.
+    """
+    by_line, gaps = _word_gaps(words)
+    if len(gaps) < pdf_ocr_config.pdf_fragment_min_words:
+        return None
+
+    # Guard 2, the geometry: spurious gaps form a second, narrower population.
+    narrow, wide = _quantile(gaps, 0.20), _quantile(gaps, 0.80)
+    if narrow <= 0 or wide / narrow < pdf_ocr_config.pdf_fragment_gap_ratio:
+        return None  # one population: ordinary spacing, leave it alone
+
+    threshold = (_quantile(gaps, 0.35) + wide) / 2
+    lines: list[str] = []
+    for key in sorted(by_line, key=lambda k: (by_line[k][0][1], by_line[k][0][0])):
+        parts = sorted(by_line[key], key=lambda w: w[0])
+        text = parts[0][4]
+        for a, b in zip(parts, parts[1:], strict=False):
+            height = a[3] - a[1]
+            gap = (b[0] - a[2]) / height if height > 0 else threshold + 1
+            joinable = (
+                len(a[4]) <= pdf_ocr_config.pdf_fragment_max_piece
+                and len(b[4]) <= pdf_ocr_config.pdf_fragment_max_piece
+            )
+            text += ("" if gap < threshold and joinable else " ") + b[4]
+        lines.append(text)
+    return "\n".join(lines).strip() or None
+
+
 def _native_page_text(page: fitz.Page, min_chars: int) -> str:
+    repaired = repair_fragmented_page_text(page)
+    if repaired is not None and len(repaired) >= min_chars:
+        return repaired
     try:
         blocks = page.get_text("blocks")
     except Exception:

@@ -364,3 +364,72 @@ class TestScrambledTextDetection:
 
         llm_fn.assert_called_once()
         assert pages == [(1, "Tasas de convergencia")]
+
+
+class TestFragmentedTextRepair:
+    """Some renderers position text per character: "Eval uaci ón de Met odol ogí as"."""
+
+    @staticmethod
+    def _words(pieces: list[tuple[str, float, float]]) -> list:
+        """Build PyMuPDF "words" tuples: (x0, y0, x1, y1, text, block, line, n)."""
+        return [
+            (x0, 0.0, x1, 10.0, text, 0, 0, i)
+            for i, (text, x0, x1) in enumerate(pieces)
+        ]
+
+    def test_rejoins_fragments_and_keeps_real_spaces(self) -> None:
+        """rejoin_words() — narrow gaps close, wide gaps stay as spaces."""
+        # Fragments sit 2pt apart; real word breaks are 7pt. Repeated so the
+        # sample is large enough for the detector to judge the distribution.
+        pieces: list[tuple[str, float, float]] = []
+        x = 0.0
+        for _ in range(3):
+            for group in (["Eval", "uaci", "ón"], ["de"], ["Met", "odol", "ogí", "as"]):
+                for token in group:
+                    pieces.append((token, x, x + 5.0 * len(token)))
+                    x += 5.0 * len(token) + 2.0
+                x += 5.0  # wider gap between real words
+        words = self._words(pieces)
+        out = pdf_ocr.rejoin_words(words)
+        assert out is not None
+        assert "Evaluación" in out
+        assert "Metodologías" in out
+        assert "Evaluaciónde" not in out
+
+    def test_leaves_evenly_spaced_text_alone(self) -> None:
+        """rejoin_words() — a single gap population is ordinary spacing."""
+        tokens = (
+            "uno dos tres cuatro cinco seis siete ocho nueve diez once doce"
+        ).split()
+        words = self._words(
+            [(t, i * 30.0, i * 30.0 + 22.0) for i, t in enumerate(tokens)]
+        )
+        assert pdf_ocr.rejoin_words(words) is None
+
+    def test_never_glues_two_real_words(self) -> None:
+        """rejoin_words() — long tokens are words, never fragments.
+
+        Dense maths pages tripped the detector and produced
+        "Operacionesconmatrices"; only short pieces may be joined.
+        """
+        pieces = []
+        x = 0.0
+        for _ in range(4):
+            for token in ("Operaciones", "con", "matrices"):
+                pieces.append((token, x, x + 5.0 * len(token)))
+                x += 5.0 * len(token) + 2.0
+            x += 5.0
+        words = self._words(pieces)
+        out = pdf_ocr.rejoin_words(words) or ""
+        assert "Operacionescon" not in out
+        assert "conmatrices" not in out
+
+    def test_too_few_words_is_left_alone(self) -> None:
+        """rejoin_words() — not enough evidence to judge means no repair."""
+        assert pdf_ocr.rejoin_words(self._words([("a", 0.0, 5.0)])) is None
+
+    def test_short_page_is_left_alone(self, tmp_path: Path) -> None:
+        """repair_fragmented_page_text() — a tiny page is never repaired."""
+        pdf = _make_pdf(tmp_path / "tiny.pdf", ["hola"])
+        page = fitz.open(pdf)[0]
+        assert pdf_ocr.repair_fragmented_page_text(page) is None

@@ -131,6 +131,19 @@ class PdfOcrConfig(BaseModel):
     # readable pages peak at 54% single-character tokens, scrambled ones run 65-86%.
     pdf_text_scramble_ratio: float = 0.6
     pdf_text_scramble_min_tokens: int = 25
+    # Some renderers position Keynote text per character, so the extractor reads
+    # "Eval uaci ón". Spurious gaps form a second, narrower population; above this
+    # wide/narrow ratio the page is treated as fragmented and rejoined.
+    # Two independent guards, both required. Neither is safe alone: healthy pages
+    # reach 84% short tokens while fragmented ones start at 85%, and the gap
+    # populations can sit as close as 1.35 apart. Together they leave no overlap.
+    pdf_fragment_short_tokens: float = 0.80
+    pdf_fragment_gap_ratio: float = 1.30
+    pdf_fragment_min_words: int = 12
+    # Only ever join two short pieces. A mid-word split leaves fragments
+    # ("Eval", "uaci", "ón"); a real word like "Operaciones" is never a fragment,
+    # so this stops dense maths pages collapsing into "Operacionesconmatrices".
+    pdf_fragment_max_piece: int = 5
 
 
 class FigureConfig(BaseModel):
