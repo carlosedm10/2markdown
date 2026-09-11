@@ -64,9 +64,51 @@ def _source_relpath(source: Path, input_dir: Path, output_dir: Path) -> Path:
     return Path(source.name)
 
 
-def _mirror_output_path(source: Path, input_dir: Path, output_dir: Path) -> Path:
+def _mirror_output_path(
+    source: Path,
+    input_dir: Path,
+    output_dir: Path,
+    *,
+    disambiguate: bool = False,
+) -> Path:
+    """Output path for a source file, mirroring the input tree.
+
+    ``disambiguate`` keeps the original extension in the name. Study folders
+    routinely hold "Seminario 1.pages" beside its own "Seminario 1.pdf"; both
+    map to "Seminario 1.md", so without this one silently overwrites the other
+    and which one survives depends on worker timing.
+    """
     rel = _source_relpath(source, input_dir, output_dir)
+    if disambiguate:
+        suffix = source.suffix.lower().lstrip(".")
+        if suffix:
+            return output_dir / rel.with_name(f"{rel.stem}.{suffix}.md")
     return output_dir / rel.with_suffix(".md")
+
+
+def plan_output_paths(
+    files: list[Path], input_dir: Path, output_dir: Path
+) -> dict[Path, Path]:
+    """Map every source to a unique output path, disambiguating stem collisions.
+
+    Only the files that actually collide get the extension in their name, so the
+    common case keeps the clean "Tema 1.md".
+    """
+    grouped: dict[Path, list[Path]] = {}
+    for source in files:
+        plain = _mirror_output_path(source, input_dir, output_dir)
+        grouped.setdefault(plain, []).append(source)
+
+    planned: dict[Path, Path] = {}
+    for plain, sources in grouped.items():
+        if len(sources) == 1:
+            planned[sources[0]] = plain
+            continue
+        for source in sources:
+            planned[source] = _mirror_output_path(
+                source, input_dir, output_dir, disambiguate=True
+            )
+    return planned
 
 
 def _unzip_dest(zip_path: Path, input_dir: Path, output_dir: Path) -> Path:
@@ -562,6 +604,7 @@ def _convert_one(
     ocr_fn: Callable[[bytes], str] | None,
     show_progress: bool,
     cancel: threading.Event | None = None,
+    planned_output: Path | None = None,
 ) -> tuple[str, int]:
     _cancelled(cancel)
     engine = _skip_ocr_if_cancelled(ocr_fn, cancel)
@@ -593,7 +636,11 @@ def _convert_one(
         markdown = _clean(markdown)
 
     suffix = _effective_suffix(source_path)
-    output_md = _mirror_output_path(source_path, input_dir, output_dir)
+    output_md = (
+        planned_output
+        if planned_output is not None
+        else _mirror_output_path(source_path, input_dir, output_dir)
+    )
     if suffix == ".pdf":
         assets_dir = output_md.parent / f"{output_md.stem}_assets"
         inlined = False
@@ -748,9 +795,13 @@ def process_batch(
             result.planned = [str(p) for p in files]
             return result
 
+        # One source per output file: "X.pages" and "X.pdf" would otherwise both
+        # write "X.md" and the later worker would silently discard the earlier.
+        planned = plan_output_paths(files, input_dir, output_dir)
+
         work: list[Path] = []
         for source_path in files:
-            output_md = _mirror_output_path(source_path, input_dir, output_dir)
+            output_md = planned[source_path]
             checksum = file_checksum(source_path)
             if manifest.should_skip(
                 source_path,
@@ -780,6 +831,7 @@ def process_batch(
             try:
                 _out, chars = _convert_one(
                     source_path,
+                    planned_output=planned.get(source_path),
                     input_dir=input_dir,
                     output_dir=output_dir,
                     ocr_fn=ocr_fn,
@@ -802,7 +854,10 @@ def process_batch(
                 return
             consumed.add(source_path)
             checksum = file_checksum(source_path)
-            output_md = _mirror_output_path(source_path, input_dir, output_dir)
+            output_md = planned.get(
+                source_path,
+                _mirror_output_path(source_path, input_dir, output_dir),
+            )
             if status == "ok":
                 manifest.record(
                     source_path,

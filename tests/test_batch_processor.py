@@ -560,3 +560,67 @@ class TestBatchProcessor:
 
         with pytest.raises(ConversionError, match="cancelled"):
             _compose_pdf("markitdown", pdf_path, cancel=cancel)
+
+
+class TestOutputPathCollisions:
+    """A folder holding "X.pages" beside "X.pdf" must not lose one of them."""
+
+    def test_colliding_stems_get_distinct_outputs(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — same-stem sources both survive, with distinct names."""
+        input_dir, output_dir = batch_dirs
+        # Two convertible formats sharing a stem, as "X.pages" + "X.pdf" do.
+        (input_dir / "Seminario 1.txt").write_text("desde el txt", encoding="utf-8")
+        (input_dir / "Seminario 1.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+
+        result = process_batch(
+            input_dir, output_dir, skip_existing=False, ocr_enabled=False
+        )
+
+        produced = sorted(p.name for p in output_dir.rglob("*.md"))
+        assert result.failed == 0
+        assert len(produced) == result.converted
+        assert produced == ["Seminario 1.csv.md", "Seminario 1.txt.md"]
+
+    def test_unique_stem_keeps_the_clean_name(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — a file with no collision keeps "<stem>.md"."""
+        input_dir, output_dir = batch_dirs
+        (input_dir / "Tema 1.txt").write_text("contenido", encoding="utf-8")
+
+        process_batch(input_dir, output_dir, skip_existing=False, ocr_enabled=False)
+
+        assert (output_dir / "Tema 1.md").exists()
+
+
+class TestPlanOutputPaths:
+    def test_plan_is_injective(self, tmp_path: Path) -> None:
+        """plan_output_paths() — every source maps to its own output path."""
+        from twomarkdown.batch.processor import plan_output_paths
+
+        out = tmp_path / "out"
+        sources = [
+            tmp_path / "Seminario 1.pages",
+            tmp_path / "Seminario 1.pdf",
+            tmp_path / "Otro.pdf",
+        ]
+        planned = plan_output_paths(sources, tmp_path, out)
+
+        assert len(set(planned.values())) == len(sources)
+        assert planned[sources[2]].name == "Otro.md"
+        assert {planned[sources[0]].name, planned[sources[1]].name} == {
+            "Seminario 1.pages.md",
+            "Seminario 1.pdf.md",
+        }
+
+    def test_plan_is_deterministic(self, tmp_path: Path) -> None:
+        """plan_output_paths() — ordering of the input list does not change names."""
+        from twomarkdown.batch.processor import plan_output_paths
+
+        out = tmp_path / "out"
+        a, b = tmp_path / "X.pages", tmp_path / "X.pdf"
+        first = plan_output_paths([a, b], tmp_path, out)
+        second = plan_output_paths([b, a], tmp_path, out)
+        assert first == second

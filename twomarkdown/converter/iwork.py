@@ -49,8 +49,18 @@ def _soffice_to_pdf(path: Path, out_dir: Path) -> Path | None:
     # LibreOffice names the output after the input stem.
     staged = out_dir / f"src{path.suffix.lower()}"
     try:
-        shutil.copy2(path, staged)
-    except OSError as exc:
+        # iWork documents come in two packagings: a single zip file, and a
+        # directory bundle. LibreOffice reads only the zip form — given a
+        # directory it exits 0 and writes nothing — so repack the bundle, whose
+        # internal layout is identical, into a zip first.
+        if path.is_dir():
+            archive = shutil.make_archive(
+                str(out_dir / "packed"), "zip", root_dir=str(path)
+            )
+            Path(archive).rename(staged)
+        else:
+            shutil.copy2(path, staged)
+    except (OSError, shutil.Error) as exc:
         logger.debug("iWork stage copy failed for %s: %s", path, exc)
         return None
     # LibreOffice shares one user profile by default, so two parallel workers
