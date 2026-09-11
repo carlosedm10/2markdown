@@ -1,4 +1,4 @@
-"""Tests for PDF asset extraction and iWork embedded image helpers."""
+"""Tests for PDF asset extraction."""
 
 from __future__ import annotations
 
@@ -9,8 +9,7 @@ from unittest.mock import patch
 import fitz
 from PIL import Image
 
-from src.converter import assets, iwork
-from tests.conftest import MINIMAL_PNG_BYTES
+from twomarkdown.converter import assets
 
 
 def _make_png_bytes(size: int = 64) -> bytes:
@@ -36,7 +35,7 @@ class TestPdfAssetExtraction:
         pdf_path = _make_pdf_with_image(tmp_path / "doc.pdf", _make_png_bytes())
         assets_dir = tmp_path / "assets"
 
-        with patch("src.converter.assets.conversion_config") as cfg:
+        with patch("twomarkdown.converter.assets.conversion_config") as cfg:
             cfg.extract_assets = True
             cfg.min_image_px = 1
             extracted = assets.extract_pdf_images(pdf_path, assets_dir)
@@ -53,7 +52,7 @@ class TestPdfAssetExtraction:
         pdf_path = _make_pdf_with_image(tmp_path / "tiny.pdf", tiny_png)
         assets_dir = tmp_path / "assets"
 
-        with patch("src.converter.assets.conversion_config") as cfg:
+        with patch("twomarkdown.converter.assets.conversion_config") as cfg:
             cfg.extract_assets = True
             cfg.min_image_px = 64
             extracted = assets.extract_pdf_images(pdf_path, assets_dir)
@@ -67,7 +66,7 @@ class TestPdfAssetExtraction:
         pdf_path = _make_pdf_with_image(tmp_path / "doc.pdf", _make_png_bytes())
         assets_dir = tmp_path / "assets"
 
-        with patch("src.converter.assets.conversion_config") as cfg:
+        with patch("twomarkdown.converter.assets.conversion_config") as cfg:
             cfg.extract_assets = False
             extracted = assets.extract_pdf_images(pdf_path, assets_dir)
 
@@ -88,72 +87,3 @@ class TestPdfAssetExtraction:
         assert "## Embedded images" in md
         assert "Page 2:" in md
         assert "![doc-p2-1](assets/doc-p2-1.png)" in md
-
-
-class TestIWorkBundleImages:
-    def test_iter_bundle_images_finds_data_raster_files(self, tmp_path: Path) -> None:
-        bundle = tmp_path / "Foo.pages"
-        data_dir = bundle / "Data"
-        data_dir.mkdir(parents=True)
-        (bundle / "Metadata").mkdir()
-        image_path = data_dir / "x.png"
-        image_path.write_bytes(MINIMAL_PNG_BYTES)
-        (data_dir / "notes.txt").write_text("not an image")
-
-        found = iwork._iter_bundle_images(bundle)
-
-        assert found == [image_path]
-
-    def test_embed_images_markdown_lists_filenames(self, tmp_path: Path) -> None:
-        bundle = tmp_path / "Foo.pages"
-        data_dir = bundle / "Data"
-        data_dir.mkdir(parents=True)
-        (bundle / "Metadata").mkdir()
-        (data_dir / "x.png").write_bytes(MINIMAL_PNG_BYTES)
-
-        md = iwork.embed_images_markdown(bundle)
-
-        assert "## Embedded images" in md
-        assert "- x.png" in md
-
-    def test_embed_images_markdown_includes_ocr_text(self, tmp_path: Path) -> None:
-        bundle = tmp_path / "Foo.pages"
-        data_dir = bundle / "Data"
-        data_dir.mkdir(parents=True)
-        (data_dir / "x.png").write_bytes(MINIMAL_PNG_BYTES)
-
-        md = iwork.embed_images_markdown(bundle, ocr_fn=lambda _: "hello ocr")
-
-        assert "- x.png" in md
-        assert "### [OCR] hello ocr" in md
-
-    def test_convert_bundle_warns_once_for_app_export(self, tmp_path: Path) -> None:
-        bundle = tmp_path / "doc.pages"
-        bundle.mkdir()
-        (bundle / "Metadata").mkdir()
-
-        with (
-            patch("src.converter.iwork.iwork_config") as cfg,
-            patch(
-                "src.converter.iwork._extract_iwa_text_from_bundle",
-                return_value="body",
-            ),
-            patch("src.converter.iwork.logger") as mock_logger,
-        ):
-            cfg.iwork_backend = "native"
-            cfg.iwork_use_app_export = True
-            cfg.iwork_enabled = True
-            iwork._app_export_warned = False
-            iwork.convert_bundle(bundle)
-            iwork.convert_bundle(bundle)
-
-        warning_messages = [
-            str(call.args[0]) for call in mock_logger.warning.call_args_list
-        ]
-        assert (
-            sum(
-                "IWORK_USE_APP_EXPORT is not supported in Docker" in msg
-                for msg in warning_messages
-            )
-            == 1
-        )

@@ -4,7 +4,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from src.converter.image_prep import prepare_image_for_vision_llm
+from twomarkdown.converter.image_prep import prepare_image_for_vision_llm
 
 
 def _large_png_bytes(width: int = 2400, height: int = 3000) -> bytes:
@@ -39,3 +39,20 @@ class TestPrepareImageForVisionLlm:
 
         assert prepared == raw
         assert mime == "image/png"
+
+
+class TestRasterizeSvg:
+    def test_rasterize_svg_requires_extra(self, tmp_path) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+
+        import pytest
+
+        from twomarkdown.converter.image_prep import rasterize_svg
+
+        svg = tmp_path / "icon.svg"
+        svg.write_text("<svg xmlns='http://www.w3.org/2000/svg'></svg>")
+        with patch.dict("sys.modules", {"cairosvg": None}):
+            with pytest.raises(RuntimeError, match="EXTRA=svg"):
+                rasterize_svg(Path(svg))
+

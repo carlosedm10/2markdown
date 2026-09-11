@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.config import conversion_config
-from src.telemetry.bench import Method, run_methods
+from twomarkdown.config import conversion_config
+from twomarkdown.telemetry.bench import Method, run_methods
 
 pytestmark = pytest.mark.bench
 

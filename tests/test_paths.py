@@ -1,8 +1,8 @@
-"""Test cases for output path resolution (src.paths)."""
+"""Test cases for output path resolution (twomarkdown.paths)."""
 
 from pathlib import Path
 
-from src.paths import default_output_dir, normalize_batch_input
+from twomarkdown.paths import default_output_dir, normalize_batch_input
 
 
 class TestDefaultOutputDir:

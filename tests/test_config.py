@@ -1,6 +1,6 @@
-"""Settings live in src/config.py; environment flags must not override them."""
+"""Settings live in twomarkdown/config.py; environment flags must not override them."""
 
-from src.config import ConversionConfig, LLMConfig, Secrets
+from twomarkdown.config import ConversionConfig, LLMConfig, Secrets
 
 
 class TestSettingsIgnoreEnv:

@@ -1,0 +1,342 @@
+"""OCR for markdown image references and raw image bytes."""
+
+import logging
+import re
+import shutil
+import threading
+from collections.abc import Callable
+from io import BytesIO
+from pathlib import Path
+
+import pytesseract
+import requests
+from PIL import Image, ImageOps
+
+from twomarkdown.config import conversion_config
+
+logger = logging.getLogger(__name__)
+
+RASTER_IMAGE_SUFFIXES = frozenset(
+    {".png", ".jpg", ".jpeg", ".gif", ".webp", ".tif", ".tiff", ".heic", ".heif"}
+)
+
+IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+
+REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+
+
+def markdown_has_usable_text(markdown: str) -> bool:
+    if not (markdown or "").strip():
+        return False
+    leftover = IMAGE_PATTERN.sub("", markdown)
+    return bool(leftover.strip())
+
+
+def is_raster_image(path: Path) -> bool:
+    if conversion_config.sniff_filetype and path.is_file():
+        try:
+            from twomarkdown.converter.filetype import effective_suffix
+
+            return effective_suffix(path) in RASTER_IMAGE_SUFFIXES
+        except Exception:
+            pass
+    return path.suffix.lower() in RASTER_IMAGE_SUFFIXES
+
+
+def extract_text_with_tesseract(image_bytes: bytes) -> str:
+    """Run pytesseract OCR on raw image bytes."""
+    if shutil.which("tesseract") is None:
+        logger.warning("tesseract binary not found on PATH")
+        return ""
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode not in ("L", "RGB"):
+                img = img.convert("RGB")
+
+            grayscale = ImageOps.grayscale(img)
+            from twomarkdown.telemetry import span
+
+            lang = conversion_config.tesseract_lang
+            with span("ocr.tesseract"):
+                text = pytesseract.image_to_string(grayscale, lang=lang).strip()
+                if not text:
+                    text = pytesseract.image_to_string(img, lang=lang).strip()
+            return text
+    except Exception as exc:
+        logger.warning("Tesseract error: %s", exc)
+        return ""
+
+
+def _resolve_image_path(ref: str, source_file: Path) -> Path | None:
+    ref = ref.strip().split()[0]  # drop optional title fragment
+    if ref.startswith(("http://", "https://", "//")):
+        return None
+    path = Path(ref)
+    if path.is_absolute() and path.is_file():
+        return path
+    candidate = (source_file.parent / ref).resolve()
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def _fetch_remote_image(url: str) -> bytes | None:
+    if not conversion_config.fetch_remote_images:
+        return None
+    try:
+        if url.startswith("//"):
+            url = "https:" + url
+        if not url.startswith(("http://", "https://")):
+            return None
+        resp = requests.get(url, timeout=20, stream=True)
+        resp.raise_for_status()
+        content_type = (resp.headers.get("Content-Type") or "").lower()
+        if not content_type.startswith("image/"):
+            return None
+        content_length = resp.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                if int(content_length) > REMOTE_IMAGE_MAX_BYTES:
+                    return None
+            except ValueError:
+                pass
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=8192):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > REMOTE_IMAGE_MAX_BYTES:
+                return None
+            chunks.append(chunk)
+        return b"".join(chunks)
+    except Exception as exc:
+        logger.warning("Failed to fetch image %s: %s", url, exc)
+        return None
+
+
+def is_tiny_image(image_bytes: bytes, min_px: int | None = None) -> bool:
+    threshold = conversion_config.min_image_px if min_px is None else min_px
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            width, height = img.size
+        return width < threshold and height < threshold
+    except Exception:
+        return False
+
+
+def tesseract_ocr_with_confidence(image_bytes: bytes) -> tuple[str, float]:
+    """Return (text, mean word confidence 0-100)."""
+    if shutil.which("tesseract") is None:
+        return "", 0.0
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode not in ("L", "RGB"):
+                img = img.convert("RGB")
+            grayscale = ImageOps.grayscale(img)
+            from twomarkdown.telemetry import span
+
+            lang = conversion_config.tesseract_lang
+            with span("ocr.tesseract"):
+                data = pytesseract.image_to_data(
+                    grayscale, lang=lang, output_type=pytesseract.Output.DICT
+                )
+        confs = [
+            float(c)
+            for c in data.get("conf", [])
+            if str(c) not in {"", "-1"} and float(c) >= 0
+        ]
+        words = [
+            t
+            for t, c in zip(data.get("text", []), data.get("conf", []), strict=False)
+            if str(t).strip() and str(c) not in {"", "-1"}
+        ]
+        text = " ".join(words).strip()
+        if not text:
+            text = extract_text_with_tesseract(image_bytes)
+        mean = sum(confs) / len(confs) if confs else 0.0
+        return text, mean
+    except Exception as exc:
+        logger.warning("Tesseract confidence OCR error: %s", exc)
+        return "", 0.0
+
+
+def ocr_image_bytes(
+    image_bytes: bytes,
+    *,
+    ocr_fn: Callable[[bytes], str] | None = None,
+    llm_if_empty_only: bool = False,
+    llm_min_confidence: float | None = None,
+    force_llm: bool = False,
+    cancel: threading.Event | None = None,
+) -> str:
+    """OCR raw image bytes, optionally escalating weak Tesseract output to the LLM.
+
+    ``llm_min_confidence`` escalates whenever Tesseract's mean word confidence falls
+    below the threshold. ``llm_if_empty_only`` escalates only on empty output, which
+    keeps confident nonsense (handwriting) and never reaches the vision model.
+    ``force_llm`` skips Tesseract entirely: on a slide whose equations are laid out
+    as separate objects, Tesseract reads the prose confidently and still shreds the
+    maths, so its confidence score says nothing useful about the page.
+    """
+    if is_tiny_image(image_bytes):
+        return ""
+    if cancel is not None and cancel.is_set():
+        return ""
+
+    use_hybrid = conversion_config.ocr_hybrid
+    llm_fn = ocr_fn
+    if llm_fn is extract_text_with_tesseract:
+        llm_fn = None
+
+    from twomarkdown.telemetry import note
+
+    if force_llm and llm_fn is not None:
+        if cancel is not None and cancel.is_set():
+            return ""
+        note("ocr.ollama", forced=True)
+        text = llm_fn(image_bytes).strip()
+        if text:
+            return text
+        # Model declined the page: fall through to the ordinary path.
+
+    if use_hybrid:
+        if cancel is not None and cancel.is_set():
+            return ""
+        text, conf = tesseract_ocr_with_confidence(image_bytes)
+        note("ocr.tesseract", confidence=round(conf, 2))
+        if cancel is not None and cancel.is_set():
+            return text
+        if llm_min_confidence is not None:
+            if text and conf >= llm_min_confidence:
+                return text
+            if llm_fn is not None:
+                if cancel is not None and cancel.is_set():
+                    return text
+                note("ocr.ollama", tesseract_confidence=round(conf, 2))
+                llm_text = llm_fn(image_bytes).strip()
+                # Keep Tesseract's output only when the model declines the page.
+                return llm_text or text
+            return text
+
+        if llm_if_empty_only:
+            if text:
+                return text
+            if llm_fn is not None:
+                if cancel is not None and cancel.is_set():
+                    return text
+                note("ocr.ollama")
+                return llm_fn(image_bytes).strip()
+            return text
+        if text and conf >= conversion_config.ocr_confidence_min:
+            return text
+        if llm_fn is not None:
+            if cancel is not None and cancel.is_set():
+                return text
+            note("ocr.ollama")
+            return llm_fn(image_bytes).strip()
+        return text
+
+    if ocr_fn is not None:
+        if cancel is not None and cancel.is_set():
+            return ""
+        return ocr_fn(image_bytes).strip()
+    if cancel is not None and cancel.is_set():
+        return ""
+    return extract_text_with_tesseract(image_bytes)
+
+
+def describe_image_bytes(image_bytes: bytes, *, language: str | None = None) -> str:
+    if not conversion_config.describe_figures:
+        return ""
+    try:
+        from twomarkdown.agents.image_ocr import describe_image_bytes_llm
+        from twomarkdown.config import llm_config
+
+        if not llm_config.llm_enabled:
+            return ""
+        return describe_image_bytes_llm(image_bytes, language=language).strip()
+    except Exception as exc:
+        logger.debug("Figure description skipped: %s", exc)
+        return ""
+
+
+def _format_ocr_block(text: str) -> str:
+    return f"\n### [OCR]\n\n{text}\n"
+
+
+def _register_heif() -> None:
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+    except ImportError as exc:
+        raise RuntimeError("HEIC support requires: make uv-sync EXTRA=heic") from exc
+
+
+def _image_bytes_for_ocr(path: Path) -> bytes:
+    suffix = path.suffix.lower()
+    if suffix == ".svg":
+        from twomarkdown.converter.image_prep import rasterize_svg
+
+        return rasterize_svg(path)
+    if suffix in {".heic", ".heif"}:
+        _register_heif()
+    return path.read_bytes()
+
+
+def convert_image_file(
+    path: Path,
+    *,
+    ocr_fn: Callable[[bytes], str] | None = None,
+    existing_markdown: str = "",
+) -> str:
+    """OCR a standalone image when MarkItDown yields little or no text."""
+    if markdown_has_usable_text(existing_markdown):
+        return existing_markdown
+    if not conversion_config.ocr_enabled:
+        return existing_markdown
+
+    ocr_text = ocr_image_bytes(_image_bytes_for_ocr(path), ocr_fn=ocr_fn)
+    if not ocr_text:
+        return existing_markdown
+
+    return f"## {path.name} — OCR\n\n{ocr_text}"
+
+
+def enrich_markdown_images(
+    markdown_content: str,
+    source_file: Path,
+    *,
+    ocr_fn: Callable[[bytes], str] | None = None,
+) -> str:
+    """
+    Find markdown image references and append OCR-extracted text blocks.
+    """
+
+    def _replace(match: re.Match) -> str:
+        ref = match.group(2).strip()
+        image_bytes: bytes | None = None
+
+        if ref.startswith(("http://", "https://", "//")):
+            image_bytes = _fetch_remote_image(ref)
+        else:
+            resolved = _resolve_image_path(ref, source_file)
+            if resolved is not None:
+                image_bytes = resolved.read_bytes()
+
+        if not image_bytes:
+            return match.group(0)
+
+        ocr_text = ocr_image_bytes(image_bytes, ocr_fn=ocr_fn)
+        if ocr_text:
+            return match.group(0) + _format_ocr_block(ocr_text)
+        caption = describe_image_bytes(image_bytes)
+        if caption:
+            return match.group(0) + f"\n### [Figure]\n\n{caption}\n"
+        return match.group(0)
+
+    return IMAGE_PATTERN.sub(_replace, markdown_content)

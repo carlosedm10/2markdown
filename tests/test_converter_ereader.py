@@ -1,4 +1,4 @@
-"""Test cases for native e-reader conversion (src.converter.ereader)."""
+"""Test cases for native e-reader conversion (twomarkdown.converter.ereader)."""
 
 import zipfile
 from pathlib import Path
@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 import pytest
 
-from src.converter.ereader import EReaderConversionError, convert_ereader, is_ereader
+from twomarkdown.converter.ereader import (
+    EReaderConversionError,
+    convert_ereader,
+    is_ereader,
+)
 
 
 def _write_minimal_epub(epub_path: Path) -> None:

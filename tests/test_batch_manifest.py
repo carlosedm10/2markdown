@@ -1,9 +1,10 @@
-"""Test cases for conversion manifest (src.batch.manifest)."""
+"""Test cases for conversion manifest (twomarkdown.batch.manifest)."""
 
 import json
+import os
 from pathlib import Path
 
-from src.batch.manifest import Manifest
+from twomarkdown.batch.manifest import Manifest, file_checksum
 
 
 class TestManifest:
@@ -208,3 +209,109 @@ class TestManifest:
 
         manifest = Manifest(manifest_path)
         assert manifest.records[key].ocr_backend is None
+
+    def test_record_persists_without_explicit_save(self, tmp_path: Path) -> None:
+        """record() — writes JSON immediately so a crash keeps prior files."""
+        manifest_path = tmp_path / ".2markdown-manifest.json"
+        source = tmp_path / "a.txt"
+        source.write_text("x")
+        output = tmp_path / "a.md"
+        output.write_text("ok")
+
+        manifest = Manifest(manifest_path)
+        manifest.record(source, status="ok", output=output)
+
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert payload["files"][str(source.resolve())]["status"] == "ok"
+
+    def test_file_checksum_directory_changes_when_inner_file_changes(
+        self, tmp_path: Path
+    ) -> None:
+        """file_checksum() — directory bundles hash nested file contents."""
+        bundle = tmp_path / "notes.pages"
+        bundle.mkdir()
+        (bundle / "Metadata").mkdir()
+        inner = bundle / "Index" / "Document.iwa"
+        inner.parent.mkdir()
+        inner.write_bytes(b"alpha")
+
+        first = file_checksum(bundle)
+        inner.write_bytes(b"beta")
+        second = file_checksum(bundle)
+
+        assert first is not None
+        assert second is not None
+        assert first != second
+
+
+class TestChecksumBeatsMtime:
+    def test_skips_when_checksum_matches_despite_newer_mtime(self, tmp_path) -> None:
+        """should_skip() — a matching checksum skips even if iCloud bumped mtime."""
+        source = tmp_path / "a.pdf"
+        source.write_bytes(b"content")
+        output = tmp_path / "a.md"
+        output.write_text("converted")
+
+        manifest = Manifest(tmp_path / ".m.json")
+        manifest.record(
+            source, status="ok", output=output, ocr_backend="ollama", checksum="abc"
+        )
+        # Source now looks newer than the output, as after an iCloud re-download.
+        os.utime(output, (1, 1))
+
+        assert (
+            manifest.should_skip(
+                source,
+                output,
+                skip_existing=True,
+                ocr_backend="ollama",
+                checksum="abc",
+            )
+            is True
+        )
+
+    def test_reconverts_when_checksum_differs(self, tmp_path) -> None:
+        """should_skip() — edited content reconverts even if mtime looks old."""
+        source = tmp_path / "a.pdf"
+        source.write_bytes(b"content")
+        output = tmp_path / "a.md"
+        output.write_text("converted")
+
+        manifest = Manifest(tmp_path / ".m.json")
+        manifest.record(
+            source, status="ok", output=output, ocr_backend="ollama", checksum="abc"
+        )
+        os.utime(source, (1, 1))
+
+        assert (
+            manifest.should_skip(
+                source,
+                output,
+                skip_existing=True,
+                ocr_backend="ollama",
+                checksum="different",
+            )
+            is False
+        )
+
+    def test_reconverts_when_markdown_was_deleted(self, tmp_path) -> None:
+        """should_skip() — deleting the .md is how you force a reconversion."""
+        source = tmp_path / "a.pdf"
+        source.write_bytes(b"content")
+        output = tmp_path / "a.md"
+
+        manifest = Manifest(tmp_path / ".m.json")
+        manifest.record(
+            source, status="ok", output=output, ocr_backend="ollama", checksum="abc"
+        )
+
+        assert (
+            manifest.should_skip(
+                source,
+                output,
+                skip_existing=True,
+                ocr_backend="ollama",
+                checksum="abc",
+            )
+            is False
+        )

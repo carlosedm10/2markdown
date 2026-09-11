@@ -1,4 +1,4 @@
-.env
+.ocr-mode
 .venv/
 __pycache__/
 *.py[cod]
@@ -12,3 +12,4 @@ build/
 *.md.bak
 .DS_Store
 /telemetry/
+.env

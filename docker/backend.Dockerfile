@@ -16,9 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     tesseract-ocr-spa \
-    libreoffice-writer \
-    libreoffice-impress \
     fonts-liberation \
+    libreoffice-writer \
+    libreoffice-calc \
+    libreoffice-impress \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

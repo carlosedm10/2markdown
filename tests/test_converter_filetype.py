@@ -1,4 +1,4 @@
-"""Tests for file type sniffing (src.converter.filetype)."""
+"""Tests for file type sniffing (twomarkdown.converter.filetype)."""
 
 import errno
 from pathlib import Path
@@ -6,8 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from src.converter.filetype import _read_prefix, effective_suffix, sniff_suffix
 from tests.conftest import MINIMAL_PNG_BYTES
+from twomarkdown.converter.filetype import (
+    _read_prefix,
+    effective_suffix,
+    sniff_suffix,
+)
 
 
 class TestFiletypeSniffing:
@@ -37,7 +41,7 @@ class TestFiletypeSniffing:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "src.converter.filetype.conversion_config.sniff_filetype",
+                "twomarkdown.converter.filetype.conversion_config.sniff_filetype",
                 True,
             )
             assert effective_suffix(png_path) == ".png"
@@ -48,10 +52,15 @@ class TestFiletypeSniffing:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "src.converter.filetype.conversion_config.sniff_filetype",
+                "twomarkdown.converter.filetype.conversion_config.sniff_filetype",
                 False,
             )
             assert effective_suffix(png_path) == ".bin"
+
+    def test_sniff_suffix_tiff_magic(self, tmp_path: Path) -> None:
+        tiff_path = tmp_path / "scan.bin"
+        tiff_path.write_bytes(b"II*\x00" + b"\x00" * 8)
+        assert sniff_suffix(tiff_path) == ".tiff"
 
     def test_sniff_suffix_falls_back_to_path_when_icloud_lock_persists(
         self, tmp_path: Path
@@ -60,7 +69,7 @@ class TestFiletypeSniffing:
         path.write_bytes(b"PK\x03\x04")
 
         with patch(
-            "src.converter.filetype._read_prefix",
+            "twomarkdown.converter.filetype._read_prefix",
             side_effect=OSError(errno.EDEADLK, "Resource deadlock avoided"),
         ):
             assert sniff_suffix(path) == ".epub"
@@ -78,7 +87,7 @@ class TestFiletypeSniffing:
             return original_open(self, *args, **kwargs)
 
         with patch.object(Path, "open", flaky), patch(
-            "src.converter.filetype.time.sleep", return_value=None
+            "twomarkdown.converter.filetype.time.sleep", return_value=None
         ):
             assert _read_prefix(path).startswith(b"%PDF")
         assert attempts["n"] == 2

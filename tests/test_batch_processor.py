@@ -1,10 +1,17 @@
-"""Test cases for batch conversion (src.batch.processor)."""
+"""Test cases for batch conversion (twomarkdown.batch.processor)."""
 
+import json
+import threading
+import time
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from src.batch.processor import process_batch
+import fitz
+import pytest
+
+from twomarkdown.batch.processor import _compose_pdf, process_batch
+from twomarkdown.converter.markitdown_converter import ConversionError
 
 
 class TestBatchProcessor:
@@ -26,11 +33,11 @@ class TestBatchProcessor:
         bad.write_bytes(b"\x00\x01\x02")
 
         with patch(
-            "src.batch.walker.conversion_config.include_extensions",
+            "twomarkdown.batch.walker.conversion_config.include_extensions",
             frozenset({".txt", ".bin"}),
         ):
             with patch(
-                "src.converter.markitdown_converter.convert_file",
+                "twomarkdown.converter.markitdown_converter.convert_file",
                 side_effect=lambda p: "converted" if p.name == "good.txt" else "",
             ):
                 result = process_batch(
@@ -61,11 +68,11 @@ class TestBatchProcessor:
         img.write_bytes(minimal_png_bytes)
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
             return_value="",
         ):
             with patch(
-                "src.converter.ocr.ocr_image_bytes",
+                "twomarkdown.converter.ocr.ocr_image_bytes",
                 return_value="Diagram text",
             ):
                 result = process_batch(
@@ -89,11 +96,11 @@ class TestBatchProcessor:
         source.write_bytes(minimal_png_bytes)
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
             return_value="",
         ):
             with patch(
-                "src.converter.ocr.ocr_image_bytes",
+                "twomarkdown.converter.ocr.ocr_image_bytes",
                 return_value="Handwritten tree",
             ):
                 result = process_batch(
@@ -117,11 +124,11 @@ class TestBatchProcessor:
         source.write_bytes(minimal_png_bytes)
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
             return_value="",
         ):
             with patch(
-                "src.converter.ocr.ocr_image_bytes",
+                "twomarkdown.converter.ocr.ocr_image_bytes",
                 return_value="",
             ):
                 result = process_batch(
@@ -145,11 +152,11 @@ class TestBatchProcessor:
         bad.write_bytes(b"\x00")
 
         with patch(
-            "src.batch.walker.conversion_config.include_extensions",
+            "twomarkdown.batch.walker.conversion_config.include_extensions",
             frozenset({".bin"}),
         ):
             with patch(
-                "src.converter.markitdown_converter.convert_file",
+                "twomarkdown.converter.markitdown_converter.convert_file",
                 return_value="",
             ):
                 process_batch(
@@ -180,7 +187,7 @@ class TestBatchProcessor:
         source.write_text("Quarterly report")
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
             return_value="Quarterly report",
         ):
             result = process_batch(
@@ -211,7 +218,7 @@ class TestBatchProcessor:
             archive.writestr("ignore.bin", b"\x00")
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
             return_value="appeal body",
         ):
             result = process_batch(
@@ -269,7 +276,7 @@ class TestBatchProcessor:
         output_md.write_text("---\nsource: stale.txt\n---\n\nold")
 
         with patch(
-            "src.converter.markitdown_converter.convert_file",
+            "twomarkdown.converter.markitdown_converter.convert_file",
         ) as mock_convert:
             result = process_batch(
                 input_dir,
@@ -293,15 +300,15 @@ class TestBatchProcessor:
         (pages / "preview.pdf").write_bytes(b"%PDF-1.4\n")
 
         with patch(
-            "src.converter.iwork.is_iwork_bundle",
+            "twomarkdown.converter.iwork.is_iwork_bundle",
             return_value=True,
         ):
             with patch(
-                "src.converter.iwork.convert_bundle",
+                "twomarkdown.converter.iwork.convert_bundle",
                 return_value="Page body text",
             ) as mock_iwork:
                 with patch(
-                    "src.converter.markitdown_converter.convert_file",
+                    "twomarkdown.converter.markitdown_converter.convert_file",
                 ) as mock_markitdown:
                     result = process_batch(
                         input_dir,
@@ -325,15 +332,15 @@ class TestBatchProcessor:
         epub.write_bytes(b"minimal epub")
 
         with patch(
-            "src.converter.ereader.is_ereader",
+            "twomarkdown.converter.ereader.is_ereader",
             return_value=True,
         ):
             with patch(
-                "src.converter.ereader.convert_ereader",
+                "twomarkdown.converter.ereader.convert_ereader",
                 return_value="EPUB body",
             ) as mock_ereader:
                 with patch(
-                    "src.converter.markitdown_converter.convert_file",
+                    "twomarkdown.converter.markitdown_converter.convert_file",
                 ) as mock_markitdown:
                     result = process_batch(
                         input_dir,
@@ -367,3 +374,253 @@ class TestBatchProcessor:
         assert result.converted == 0
         assert str(source.resolve()) in result.planned
         assert not (output_dir / "notes.md").exists()
+
+    def test_process_batch_times_out_sequential_file(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — sequential timeout is recorded without hanging."""
+        input_dir, output_dir = batch_dirs
+        hung = input_dir / "slow.txt"
+        hung.write_text("slow")
+        fast = input_dir / "fast.txt"
+        fast.write_text("fast")
+
+        def convert(path: Path) -> str:
+            if path.name == "slow.txt":
+                time.sleep(5)
+            return "ok"
+
+        with (
+            patch(
+                "twomarkdown.batch.processor.conversion_config.file_timeout_sec",
+                0.2,
+            ),
+            patch("twomarkdown.batch.processor.conversion_config.parallel_workers", 1),
+            patch(
+                "twomarkdown.converter.markitdown_converter.convert_file",
+                side_effect=convert,
+            ),
+        ):
+            result = process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+                show_progress=False,
+            )
+
+        assert result.failed == 1
+        assert result.converted == 1
+        assert any("timeout after" in (p or "") for p in result.failed_paths) or (
+            str(hung.resolve()) in result.failed_paths
+        )
+        payload = json.loads(
+            (output_dir / ".2markdown-manifest.json").read_text(encoding="utf-8")
+        )
+        hung_record = payload["files"][str(hung.resolve())]
+        assert hung_record["status"] == "failed"
+        assert "timeout" in (hung_record["error"] or "")
+
+    def test_process_batch_times_out_parallel_file(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — parallel workers time out the hung file only."""
+        input_dir, output_dir = batch_dirs
+        hung = input_dir / "slow.txt"
+        hung.write_text("slow")
+        fast = input_dir / "fast.txt"
+        fast.write_text("fast")
+
+        def convert(path: Path) -> str:
+            if path.name == "slow.txt":
+                time.sleep(5)
+            return "ok"
+
+        with (
+            patch(
+                "twomarkdown.batch.processor.conversion_config.file_timeout_sec",
+                0.2,
+            ),
+            patch("twomarkdown.batch.processor.conversion_config.parallel_workers", 2),
+            patch(
+                "twomarkdown.converter.markitdown_converter.convert_file",
+                side_effect=convert,
+            ),
+        ):
+            result = process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+                show_progress=False,
+            )
+
+        assert result.failed == 1
+        assert result.converted == 1
+        assert str(hung.resolve()) in result.failed_paths
+
+    def test_process_batch_parallel_timeout_does_not_expire_queued_files(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """Queued files must not inherit the in-flight files' 300s clock."""
+        input_dir, output_dir = batch_dirs
+        hung_paths = []
+        fast_paths = []
+        for name in ("slow-a.txt", "slow-b.txt"):
+            path = input_dir / name
+            path.write_text("slow")
+            hung_paths.append(path)
+        for name in ("fast-a.txt", "fast-b.txt", "fast-c.txt"):
+            path = input_dir / name
+            path.write_text("fast")
+            fast_paths.append(path)
+
+        def convert(path: Path) -> str:
+            if path.name.startswith("slow"):
+                time.sleep(1.2)
+            return "ok"
+
+        with (
+            patch(
+                "twomarkdown.batch.processor.conversion_config.file_timeout_sec",
+                0.25,
+            ),
+            patch("twomarkdown.batch.processor.conversion_config.parallel_workers", 2),
+            patch(
+                "twomarkdown.converter.markitdown_converter.convert_file",
+                side_effect=convert,
+            ),
+        ):
+            result = process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+                show_progress=False,
+            )
+
+        assert result.failed == 2
+        assert result.converted == 3
+        for path in hung_paths:
+            assert str(path.resolve()) in result.failed_paths
+        for path in fast_paths:
+            assert (output_dir / path.with_suffix(".md").name).exists()
+
+    def test_process_batch_manifest_has_first_file_before_second_converts(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — manifest is on disk after the first file is recorded."""
+        input_dir, output_dir = batch_dirs
+        first = input_dir / "a.txt"
+        second = input_dir / "b.txt"
+        first.write_text("one")
+        second.write_text("two")
+        seen_first = {"ok": False}
+
+        def convert(path: Path) -> str:
+            if path.name == "b.txt":
+                payload = json.loads(
+                    (output_dir / ".2markdown-manifest.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                record = payload["files"].get(str(first.resolve()))
+                seen_first["ok"] = record is not None and record["status"] == "ok"
+            return "converted"
+
+        with (
+            patch(
+                "twomarkdown.converter.markitdown_converter.convert_file",
+                side_effect=convert,
+            ),
+            patch(
+                "twomarkdown.batch.processor.conversion_config.parallel_workers",
+                1,
+            ),
+        ):
+            process_batch(
+                input_dir,
+                output_dir,
+                skip_existing=False,
+                ocr_enabled=False,
+                show_progress=False,
+            )
+
+        assert seen_first["ok"] is True
+
+    def test_compose_pdf_does_not_swallow_cancel(self, tmp_path: Path) -> None:
+        """_compose_pdf() — timeout cancel is not a soft compose miss."""
+        doc = fitz.open()
+        doc.new_page()
+        pdf_path = tmp_path / "scan.pdf"
+        doc.save(pdf_path)
+        doc.close()
+        cancel = threading.Event()
+        cancel.set()
+
+        with pytest.raises(ConversionError, match="cancelled"):
+            _compose_pdf("markitdown", pdf_path, cancel=cancel)
+
+
+class TestOutputPathCollisions:
+    """A folder holding "X.pages" beside "X.pdf" must not lose one of them."""
+
+    def test_colliding_stems_get_distinct_outputs(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — same-stem sources both survive, with distinct names."""
+        input_dir, output_dir = batch_dirs
+        # Two convertible formats sharing a stem, as "X.pages" + "X.pdf" do.
+        (input_dir / "Seminario 1.txt").write_text("desde el txt", encoding="utf-8")
+        (input_dir / "Seminario 1.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+
+        result = process_batch(
+            input_dir, output_dir, skip_existing=False, ocr_enabled=False
+        )
+
+        produced = sorted(p.name for p in output_dir.rglob("*.md"))
+        assert result.failed == 0
+        assert len(produced) == result.converted
+        assert produced == ["Seminario 1.csv.md", "Seminario 1.txt.md"]
+
+    def test_unique_stem_keeps_the_clean_name(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — a file with no collision keeps "<stem>.md"."""
+        input_dir, output_dir = batch_dirs
+        (input_dir / "Tema 1.txt").write_text("contenido", encoding="utf-8")
+
+        process_batch(input_dir, output_dir, skip_existing=False, ocr_enabled=False)
+
+        assert (output_dir / "Tema 1.md").exists()
+
+
+class TestPlanOutputPaths:
+    def test_plan_is_injective(self, tmp_path: Path) -> None:
+        """plan_output_paths() — every source maps to its own output path."""
+        from twomarkdown.batch.processor import plan_output_paths
+
+        out = tmp_path / "out"
+        sources = [
+            tmp_path / "Seminario 1.pages",
+            tmp_path / "Seminario 1.pdf",
+            tmp_path / "Otro.pdf",
+        ]
+        planned = plan_output_paths(sources, tmp_path, out)
+
+        assert len(set(planned.values())) == len(sources)
+        assert planned[sources[2]].name == "Otro.md"
+        assert {planned[sources[0]].name, planned[sources[1]].name} == {
+            "Seminario 1.pages.md",
+            "Seminario 1.pdf.md",
+        }
+
+    def test_plan_is_deterministic(self, tmp_path: Path) -> None:
+        """plan_output_paths() — ordering of the input list does not change names."""
+        from twomarkdown.batch.processor import plan_output_paths
+
+        out = tmp_path / "out"
+        a, b = tmp_path / "X.pages", tmp_path / "X.pdf"
+        first = plan_output_paths([a, b], tmp_path, out)
+        second = plan_output_paths([b, a], tmp_path, out)
+        assert first == second
