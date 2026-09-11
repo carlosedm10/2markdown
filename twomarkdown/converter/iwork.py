@@ -40,12 +40,12 @@ def _find_soffice() -> str | None:
     return None
 
 
-def _soffice_to_pdf(path: Path, out_dir: Path) -> Path | None:
-    """Render an iWork bundle to PDF with LibreOffice. Returns None on failure."""
-    soffice = _find_soffice()
-    if soffice is None:
-        logger.debug("soffice not on PATH; skipping LibreOffice iWork route")
-        return None
+def stage_for_soffice(path: Path, out_dir: Path) -> Path | None:
+    """Put an iWork document where LibreOffice can read it, as a single file.
+
+    Split out from the conversion so it is testable without LibreOffice
+    installed: CI runs natively, where soffice is absent.
+    """
     # LibreOffice names the output after the input stem.
     staged = out_dir / f"src{path.suffix.lower()}"
     try:
@@ -63,6 +63,20 @@ def _soffice_to_pdf(path: Path, out_dir: Path) -> Path | None:
     except (OSError, shutil.Error) as exc:
         logger.debug("iWork stage copy failed for %s: %s", path, exc)
         return None
+    return staged
+
+
+def _soffice_to_pdf(path: Path, out_dir: Path) -> Path | None:
+    """Render an iWork document to PDF with LibreOffice. None on any failure."""
+    soffice = _find_soffice()
+    if soffice is None:
+        logger.debug("soffice not on PATH; skipping LibreOffice iWork route")
+        return None
+
+    staged = stage_for_soffice(path, out_dir)
+    if staged is None:
+        return None
+
     # LibreOffice shares one user profile by default, so two parallel workers
     # collide and one silently falls back. Give each run a private profile.
     profile = out_dir / "lo-profile"
