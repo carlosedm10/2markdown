@@ -1,3 +1,23 @@
 # Secrets only. Compose loads this file into the converter container.
 # Feature flags, OCR, PDF, iWork, and tuning live in src/config.py.
 # OCR engine: make build  (tesseract)  or  make build ollama
+
+# --- AI provider credentials (optional) -------------------------------------
+# Model selection is provider-neutral: set vision_model / figure_model in
+# twomarkdown/config.py (or `make build ollama OLLAMA_MODEL=...`) to a
+# "<provider>:<model>" id. A bare name means Ollama, which needs no key.
+#
+#   ollama:qwen2.5vl:32b          local, no key, default
+#   openai:gpt-5.2                needs OPENAI_API_KEY
+#   anthropic:claude-sonnet-4-5   needs ANTHROPIC_API_KEY
+#   google:gemini-3-pro           needs GOOGLE_API_KEY
+#   groq:llama-3.3-70b            needs GROQ_API_KEY
+#
+# Only uncomment what you actually use; pydantic-ai reads these from the
+# environment, and compose passes this file into the container.
+# OPENAI_API_KEY=
+# ANTHROPIC_API_KEY=
+# GOOGLE_API_KEY=
+# GROQ_API_KEY=
+# MISTRAL_API_KEY=
+# OPENROUTER_API_KEY=

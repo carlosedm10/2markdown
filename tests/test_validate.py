@@ -441,3 +441,31 @@ class TestImagePathsWithSpaces:
             f for f in validate_markdown(md, text) if f.rule == "missing_figure_assets"
         ]
         assert len(findings) == 1
+
+
+class TestIncompleteConversion:
+    def test_partial_file_is_reported_as_an_error(self, tmp_path) -> None:
+        """validate_markdown() — a truncated conversion must not pass silently."""
+        md = tmp_path / "Tema 5.md"
+        text = (
+            "---\nsource: \"Tema 5.pdf\"\n---\n"
+            "> **INCOMPLETO:** la conversión de `Tema 5.pdf` se detuvo.\n\n"
+            "## Page 1\n\ncontenido real\n"
+        )
+        md.write_text(text, encoding="utf-8")
+
+        findings = [
+            f for f in validate_markdown(md, text) if f.rule == "incomplete_conversion"
+        ]
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+
+    def test_complete_file_is_silent(self, tmp_path) -> None:
+        """validate_markdown() — an ordinary file raises no incompleteness flag."""
+        md = tmp_path / "Tema 1.md"
+        text = "---\nsource: \"Tema 1.pdf\"\n---\n## Page 1\n\ncontenido\n"
+        md.write_text(text, encoding="utf-8")
+
+        assert not [
+            f for f in validate_markdown(md, text) if f.rule == "incomplete_conversion"
+        ]

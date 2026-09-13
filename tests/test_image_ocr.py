@@ -8,7 +8,11 @@ from twomarkdown.agents import image_ocr
 
 
 class TestOllamaVisionSerial:
-    def test_ocr_image_bytes_llm_calls_do_not_overlap(self) -> None:
+    def test_ocr_image_bytes_llm_calls_do_not_overlap(self, monkeypatch) -> None:
+        """One local model, one request in flight. Hosted models are not serialized."""
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:7b")
         current = 0
         max_seen = 0
         lock = threading.Lock()

@@ -196,6 +196,58 @@ def normalize_latex_markup(text: str) -> str:
     )
 
 
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|(?:\s*:?-{2,}:?\s*\|)+\s*$")
+
+
+def _is_blank_row(line: str) -> bool:
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    return not any(cells)
+
+
+def _separator_for(line: str) -> str:
+    columns = len(line.strip().strip("|").split("|"))
+    return "| " + " | ".join("---" for _ in range(columns)) + " |"
+
+
+def repair_markdown_tables(text: str) -> str:
+    """Give every pipe table a header separator, and drop an empty header row.
+
+    Two sources get this wrong in opposite ways. LibreOffice's HTML, converted to
+    Markdown, emits no separator at all, so the table renders as literal pipes.
+    MarkItDown emits a separator but leaves the first row blank, demoting the real
+    header into the body. Both are repaired here so the fix is source-agnostic.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    index = 0
+    in_fence = False
+    while index < len(lines):
+        line = lines[index]
+        if _is_fence_line(line):
+            in_fence = not in_fence
+            out.append(line)
+            index += 1
+            continue
+        if in_fence or not _is_table_line(line):
+            out.append(line)
+            index += 1
+            continue
+
+        block: list[str] = []
+        while index < len(lines) and _is_table_line(lines[index]):
+            block.append(lines[index])
+            index += 1
+
+        has_separator = len(block) > 1 and bool(_TABLE_SEPARATOR_RE.match(block[1]))
+        if has_separator and _is_blank_row(block[0]) and len(block) > 2:
+            # Promote the real header and rebuild the rule to match it.
+            block = [block[2], _separator_for(block[2])] + block[3:]
+        elif not has_separator:
+            block = [block[0], _separator_for(block[0])] + block[1:]
+        out.extend(block)
+    return "\n".join(out)
+
+
 def dehyphenate_line_breaks(text: str) -> str:
     """Join words split across a line break: ``docu-\\nment`` → ``document``."""
     return _DEHYPHENATE_RE.sub(r"\1\2", text)
@@ -345,6 +397,7 @@ def clean_markdown(text: str) -> str:
         dehyphenate_line_breaks,
         group_broken_paragraphs,
         strip_repeated_running_headers,
+        repair_markdown_tables,
     )
     for step in steps:
         text = step(text)

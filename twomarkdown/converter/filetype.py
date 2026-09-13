@@ -96,6 +96,9 @@ def _sniff_zip_suffix(path: Path) -> str | None:
     except (OSError, zipfile.BadZipFile):
         return ".zip"
 
+    if "matlab/document.xml" in names:
+        return ".mlx"
+
     if "[Content_Types].xml" in names:
         if "word/document.xml" in names:
             return ".docx"

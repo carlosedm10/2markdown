@@ -158,12 +158,12 @@ class TestTextHeavyRegions:
         assert regions == []
 
 
-class TestDescriptionsAreOptIn:
-    def test_descriptions_are_off_by_default(self) -> None:
-        """FigureConfig — captions are opt-in; they dominated measured runtime."""
+class TestDescriptionsAreConfigurable:
+    def test_descriptions_are_on_by_default(self) -> None:
+        """FigureConfig — captions ship on; --no-describe-figures is the fast path."""
         from twomarkdown.config import FigureConfig
 
-        assert FigureConfig().describe_figures_llm is False
+        assert FigureConfig().describe_figures_llm is True
 
     def test_figures_rendered_without_captions(self, tmp_path: Path) -> None:
         """extract_figures() — crops are produced regardless of captioning."""
