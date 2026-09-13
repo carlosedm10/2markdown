@@ -110,3 +110,134 @@ class TestOrderByCost:
 
         assert set(ordered) == {a, b}
         assert ordered[0] == a
+
+
+class TestTimeoutBudget:
+    """A long file must not be killed for being long."""
+
+    def test_budget_grows_with_the_work(self) -> None:
+        """FilePlan.weight — 28 model pages must earn more time than 2."""
+        small = FilePlan(Path("a.pdf"), pages=3, vlm_pages=2, figures=0)
+        large = FilePlan(Path("b.pdf"), pages=90, vlm_pages=28, figures=30)
+
+        assert large.weight > small.weight * 10
+
+    def test_local_and_remote_budgets_differ(self, monkeypatch) -> None:
+        """FilePlan.weight — a hosted model is far quicker, and the plan knows."""
+        from twomarkdown.config import llm_config
+
+        plan = FilePlan(Path("a.pdf"), pages=30, vlm_pages=25, figures=0)
+
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        local = plan.weight
+        monkeypatch.setattr(llm_config, "vision_model", "openai:gpt-4o")
+        remote = plan.weight
+
+        assert local > remote * 3
+
+    def test_file_with_no_model_work_costs_nothing(self) -> None:
+        """FilePlan.weight — a fully digital PDF needs no allowance at all."""
+        assert FilePlan(Path("a.pdf"), pages=50, vlm_pages=0, figures=0).weight == 0
+
+
+class TestFileTimeoutBudget:
+    """The clock that cuts a file off must use that file's own budget."""
+
+    def test_heavy_file_gets_more_than_the_floor(self) -> None:
+        """file_timeout_budget() — 60 minutes of work is not cut off at 10."""
+        from twomarkdown.batch.processor import file_timeout_budget
+
+        assert file_timeout_budget(3600.0, floor=600.0, factor=1.0) == 3600.0
+
+    def test_small_file_still_gets_the_floor(self) -> None:
+        """file_timeout_budget() — a quick file keeps a usable minimum."""
+        from twomarkdown.batch.processor import file_timeout_budget
+
+        assert file_timeout_budget(5.0, floor=600.0, factor=1.0) == 600.0
+
+    def test_factor_scales_the_estimate(self) -> None:
+        """file_timeout_budget() — headroom multiplies the estimate."""
+        from twomarkdown.batch.processor import file_timeout_budget
+
+        assert file_timeout_budget(1000.0, floor=600.0, factor=3.0) == 3000.0
+
+    def test_disabled_timeout_stays_disabled(self) -> None:
+        """file_timeout_budget() — no floor means no deadline at all."""
+        from twomarkdown.batch.processor import file_timeout_budget
+
+        assert file_timeout_budget(9999.0, floor=None, factor=3.0) is None
+
+
+class TestEffectiveWorkers:
+    """Extra workers cannot help when one GPU is the whole batch."""
+
+    def test_a_local_vision_model_runs_one_file_at_a_time(self, monkeypatch) -> None:
+        """effective_workers() — queueing on the GPU still burns the file's clock.
+
+        Four workers on 8 handwritten PDFs all hit the 600s per-file timeout
+        without finishing a page: three of the four were always waiting for the
+        single vision permit, and that wait counts against them.
+        """
+        from twomarkdown.batch.processor import effective_workers
+        from twomarkdown.config import conversion_config, llm_config
+
+        monkeypatch.setattr(conversion_config, "parallel_workers", 4)
+        monkeypatch.setattr(conversion_config, "ocr_enabled", True)
+        monkeypatch.setattr(llm_config, "llm_enabled", True)
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+
+        assert effective_workers() == 1
+
+    def test_a_hosted_model_keeps_every_worker(self, monkeypatch) -> None:
+        """effective_workers() — a hosted provider answers many files at once."""
+        from twomarkdown.batch.processor import effective_workers
+        from twomarkdown.config import conversion_config, llm_config
+
+        monkeypatch.setattr(conversion_config, "parallel_workers", 4)
+        monkeypatch.setattr(conversion_config, "ocr_enabled", True)
+        monkeypatch.setattr(llm_config, "llm_enabled", True)
+        monkeypatch.setattr(llm_config, "vision_model", "openai:gpt-4o")
+
+        assert effective_workers() == 4
+
+    def test_without_a_vision_model_nothing_is_serialized(self, monkeypatch) -> None:
+        """effective_workers() — Tesseract and plain parsing are CPU work."""
+        from twomarkdown.batch.processor import effective_workers
+        from twomarkdown.config import conversion_config, llm_config
+
+        monkeypatch.setattr(conversion_config, "parallel_workers", 4)
+        monkeypatch.setattr(llm_config, "llm_enabled", False)
+
+        assert effective_workers() == 4
+
+
+class TestLocalPageBudgetMatchesReality:
+    """The estimate has to be the measured cost, or every budget is short."""
+
+    def test_a_local_page_is_costed_at_what_it_measured(self, monkeypatch) -> None:
+        """LOCAL_SECONDS_PER_VLM_PAGE — a handwritten page took 87-160s.
+
+        The previous 60s came from printed slides. Applied to scans it sized a
+        six-page file at 18 minutes of allowance for work that needs 15, and the
+        whole batch was killed mid-page.
+        """
+        from twomarkdown.batch import planner
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        plan = planner.FilePlan(Path("a.pdf"), pages=6, vlm_pages=6, figures=0)
+
+        assert plan.weight >= 6 * 87.0
+
+    def test_a_multi_page_scan_is_given_far_more_than_the_floor(
+        self, monkeypatch
+    ) -> None:
+        """file_timeout_budget() — six scanned pages must outlast a 10-minute floor."""
+        from twomarkdown.batch import planner
+        from twomarkdown.batch.processor import file_timeout_budget
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        plan = planner.FilePlan(Path("a.pdf"), pages=6, vlm_pages=6, figures=0)
+
+        assert file_timeout_budget(plan.weight, floor=600.0, factor=3.0) > 2400.0

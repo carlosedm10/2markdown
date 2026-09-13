@@ -26,10 +26,29 @@ from twomarkdown.config import figure_config, pdf_ocr_config
 
 logger = logging.getLogger(__name__)
 
-# Rough per-unit costs, used only to order work and print an estimate. They are
-# deliberately coarse: the point is relative weight, not a promise.
-SECONDS_PER_VLM_PAGE = 40.0
-SECONDS_PER_FIGURE = 10.0
+# Per-unit costs, used to order work, print an estimate, and size each file's
+# timeout. Measured on this corpus: qwen2.5vl:32b takes 87-160s on a handwritten
+# page (the 60s here before was a printed-slide figure, and it sized every
+# timeout too small to finish one), while gpt-4o answers in ~5s and several
+# requests run at once. A local estimate applied to a hosted model overshot the
+# real time by 13x, so the two are split.
+LOCAL_SECONDS_PER_VLM_PAGE = 150.0
+LOCAL_SECONDS_PER_FIGURE = 40.0
+REMOTE_SECONDS_PER_VLM_PAGE = 8.0
+REMOTE_SECONDS_PER_FIGURE = 4.0
+
+
+def _rates() -> tuple[float, float]:
+    """Per-page and per-figure seconds for whichever model is configured."""
+    try:
+        from twomarkdown.agents.image_ocr import is_local_model
+        from twomarkdown.config import llm_config
+
+        if not is_local_model(llm_config.vision_model):
+            return REMOTE_SECONDS_PER_VLM_PAGE, REMOTE_SECONDS_PER_FIGURE
+    except Exception:
+        pass
+    return LOCAL_SECONDS_PER_VLM_PAGE, LOCAL_SECONDS_PER_FIGURE
 
 
 @dataclass(frozen=True)
@@ -44,10 +63,8 @@ class FilePlan:
     @property
     def weight(self) -> float:
         """Estimated seconds of model time, the only cost that matters."""
-        return (
-            self.vlm_pages * SECONDS_PER_VLM_PAGE
-            + self.figures * SECONDS_PER_FIGURE
-        )
+        page_rate, figure_rate = _rates()
+        return self.vlm_pages * page_rate + self.figures * figure_rate
 
 
 @dataclass(frozen=True)
