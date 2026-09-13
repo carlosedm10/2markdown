@@ -156,3 +156,17 @@ class TestTextHeavyRegions:
         regions = detect_figure_regions(opened[0])
         opened.close()
         assert regions == []
+
+
+class TestDescriptionsAreConfigurable:
+    def test_descriptions_are_on_by_default(self) -> None:
+        """FigureConfig — captions ship on; --no-describe-figures is the fast path."""
+        from twomarkdown.config import FigureConfig
+
+        assert FigureConfig().describe_figures_llm is True
+
+    def test_figures_rendered_without_captions(self, tmp_path: Path) -> None:
+        """extract_figures() — crops are produced regardless of captioning."""
+        pdf = _pdf_with_vector_figure(tmp_path / "fig.pdf")
+        figures = extract_figures(pdf, tmp_path / "assets")
+        assert figures and figures[0].path.is_file()

@@ -5,11 +5,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import fitz
-import pytest
 
 from twomarkdown.config import pdf_ocr_config
 from twomarkdown.converter import pdf_ocr
-from twomarkdown.converter.markitdown_converter import ConversionError
 
 LONG_TEXT = "x" * pdf_ocr_config.pdf_ocr_min_chars
 SHORT_TEXT = "scan"
@@ -193,6 +191,10 @@ class TestPdfOcrFallback:
         llm_fn = MagicMock(return_value="vision text")
 
         with (
+            patch(
+                "twomarkdown.converter.pdf_ocr._vision_model_available",
+                lambda: False,
+            ),
             patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
             patch(
@@ -218,6 +220,10 @@ class TestPdfOcrFallback:
         llm_fn = MagicMock(return_value="vision text")
 
         with (
+            patch(
+                "twomarkdown.converter.pdf_ocr._vision_model_available",
+                lambda: False,
+            ),
             patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
             patch(
@@ -243,6 +249,10 @@ class TestPdfOcrFallback:
         llm_fn = MagicMock(return_value="")
 
         with (
+            patch(
+                "twomarkdown.converter.pdf_ocr._vision_model_available",
+                lambda: False,
+            ),
             patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
             patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
             patch(
@@ -274,10 +284,12 @@ class TestPdfOcrFallback:
             return f"OCR-{len(calls)}"
 
         with patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", False):
-            with pytest.raises(ConversionError, match="cancelled"):
-                pdf_ocr.extract_pages(scan, ocr_fn=ocr_fn, cancel=cancel)
+            pages = pdf_ocr.extract_pages(scan, ocr_fn=ocr_fn, cancel=cancel)
 
+        # Cancelling stops further work but keeps what was already transcribed:
+        # discarding it meant a timeout threw away every good page in the file.
         assert len(calls) == 1
+        assert pages == [(1, "OCR-1")]
 
 
 
@@ -433,3 +445,58 @@ class TestFragmentedTextRepair:
         pdf = _make_pdf(tmp_path / "tiny.pdf", ["hola"])
         page = fitz.open(pdf)[0]
         assert pdf_ocr.repair_fragmented_page_text(page) is None
+
+
+class TestVisionModelIsNotVetoedByTesseract:
+    """Tesseract scores handwriting confidently and still gets it wrong."""
+
+    def test_scanned_page_reaches_the_model_despite_high_confidence(
+        self, tmp_path: Path
+    ) -> None:
+        """extract_pages() — a configured vision model does the page, not Tesseract.
+
+        On this corpus Tesseract's median confidence was 73 against a threshold
+        of 75, so it blocked the model essentially at random and 77 pages came
+        out as noise.
+        """
+        empty = _make_pdf(tmp_path / "scan.pdf", [""])
+        llm_fn = MagicMock(return_value="transcripción correcta")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.pdf_ocr._vision_model_available",
+                lambda: True,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("ruido con mucha confianza", 95.0),
+            ),
+        ):
+            pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
+
+        llm_fn.assert_called_once()
+        assert pages == [(1, "transcripción correcta")]
+
+    def test_without_a_model_tesseract_is_still_used(self, tmp_path: Path) -> None:
+        """extract_pages() — with no vision model, Tesseract remains the fallback."""
+        empty = _make_pdf(tmp_path / "scan.pdf", [""])
+        llm_fn = MagicMock(return_value="")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.pdf_ocr._vision_model_available",
+                lambda: False,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("texto impreso limpio", 95.0),
+            ),
+        ):
+            pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
+
+        llm_fn.assert_not_called()
+        assert pages == [(1, "texto impreso limpio")]

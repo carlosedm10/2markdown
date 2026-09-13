@@ -24,6 +24,30 @@ IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 
+# Which engine produced the text for the file the calling thread is converting.
+# When a vision model is configured but a page falls through to Tesseract, the
+# page still gets written, and nothing in the output said so: one run shipped 134
+# pages of Tesseract noise under `ocr_model: ollama:qwen2.5vl:32b`. One file is
+# converted per thread, so thread-local state matches the unit being recorded.
+_engines = threading.local()
+
+
+def begin_engine_record() -> None:
+    """Start recording which OCR engine answers, for one file."""
+    _engines.fallback_pages = []
+
+
+def record_engine_fallback() -> None:
+    """Note that Tesseract answered a page a vision model was meant to do."""
+    pages = getattr(_engines, "fallback_pages", None)
+    if pages is not None:
+        pages.append(True)
+
+
+def engine_fallback_count() -> int:
+    """How many pages fell back since `begin_engine_record`."""
+    return len(getattr(_engines, "fallback_pages", None) or ())
+
 
 def markdown_has_usable_text(markdown: str) -> bool:
     if not (markdown or "").strip():
@@ -201,7 +225,11 @@ def ocr_image_bytes(
         text = llm_fn(image_bytes).strip()
         if text:
             return text
-        # Model declined the page: fall through to the ordinary path.
+        # Model declined the page: fall through to Tesseract, but do not ask the
+        # model again further down. It has already had this exact image, and the
+        # retries inside the call have already run; a second pass only doubled the
+        # cost of every failure — 121 failed pages paid for it twice in one run.
+        llm_fn = None
 
     if use_hybrid:
         if cancel is not None and cancel.is_set():
@@ -219,7 +247,11 @@ def ocr_image_bytes(
                 note("ocr.ollama", tesseract_confidence=round(conf, 2))
                 llm_text = llm_fn(image_bytes).strip()
                 # Keep Tesseract's output only when the model declines the page.
+                if not llm_text and text:
+                    record_engine_fallback()
                 return llm_text or text
+            if text and force_llm:
+                record_engine_fallback()
             return text
 
         if llm_if_empty_only:

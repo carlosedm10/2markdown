@@ -35,7 +35,8 @@ help:
 	@echo "  make export-iwork INPUT=\"/path\"  Pre-export iWork via Pages.app (only if LibreOffice fails)"
 	@echo "  make process INPUT=\"/path\" [VERBOSE=1] [DRY_RUN=1] [WORKERS=n]"
 	@echo "            [FORCE=1] [OCR_BACKEND=tesseract|ollama] [OUTPUT=/path]"
-	@echo "            [NO_OCR=1] [EMIT_CHUNKS=1] [SKIP_IWORK_EXPORT=1]"
+	@echo "            [NO_OCR=1] [EMIT_CHUNKS=1] [IWORK_EXPORT=1]"
+	@echo "            [DESCRIBE_FIGURES=1] [FIGURE_MODEL=qwen2.5vl:7b]"
 	@echo "  make validate INPUT=\"/path_2markdown\"   Deterministic quality gate over converted markdown"
 	@echo "  make judge INPUT=\"/path_2markdown\"      LLM review queue for implausible maths (needs Ollama)"
 	@echo ""
@@ -156,6 +157,10 @@ process:
 	if [ -n "$(OCR_BACKEND)" ]; then OCR_BACKEND_FLAG="--ocr-backend $(OCR_BACKEND)"; fi; \
 	CHUNKS_FLAG=""; \
 	if [ "$(EMIT_CHUNKS)" = "1" ]; then CHUNKS_FLAG="--emit-chunks"; fi; \
+	FIGURES_FLAG=""; \
+	if [ "$(DESCRIBE_FIGURES)" = "1" ]; then FIGURES_FLAG="--describe-figures"; fi; \
+	FIGURE_MODEL_FLAG=""; \
+	if [ -n "$(FIGURE_MODEL)" ]; then FIGURE_MODEL_FLAG="--figure-model $(FIGURE_MODEL)"; fi; \
 	docker compose run --rm \
 		-e TWOMARKDOWN_TELEMETRY_DIR=/app/telemetry \
 		-v "$$INPUT_ABS:$$INPUT_ABS" \
@@ -163,7 +168,8 @@ process:
 		$(SERVICE) uv run python -m twomarkdown.cli \
 		--input "$$INPUT_ABS" \
 		--output "$$OUTPUT_ABS" \
-		$$VERBOSE_FLAG $$DRY_RUN_FLAG $$WORKERS_FLAG $$FORCE_FLAG $$OCR_FLAG $$OCR_BACKEND_FLAG $$CHUNKS_FLAG
+		$$VERBOSE_FLAG $$DRY_RUN_FLAG $$WORKERS_FLAG $$FORCE_FLAG $$OCR_FLAG $$OCR_BACKEND_FLAG $$CHUNKS_FLAG \
+		$$FIGURES_FLAG $$FIGURE_MODEL_FLAG
 
 down:
 	@echo ":: down: ."

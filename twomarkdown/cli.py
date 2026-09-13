@@ -7,7 +7,12 @@ from typing import Literal
 import typer
 
 from twomarkdown.batch.processor import process_batch
-from twomarkdown.config import conversion_config, llm_config, pdf_ocr_config
+from twomarkdown.config import (
+    conversion_config,
+    figure_config,
+    llm_config,
+    pdf_ocr_config,
+)
 from twomarkdown.paths import normalize_batch_input
 
 app = typer.Typer(
@@ -125,6 +130,22 @@ def convert(
             f"(default: {conversion_config.parallel_workers})"
         ),
     ),
+    figure_model: str | None = typer.Option(
+        None,
+        "--figure-model",
+        help=(
+            "Vision model for figure captions "
+            f"(default: {llm_config.figure_model})"
+        ),
+    ),
+    review_model: str | None = typer.Option(
+        None,
+        "--review-model",
+        help=(
+            "Second-pass model that checks each page against its transcription "
+            "(default: off; a hosted model is recommended)"
+        ),
+    ),
     emit_chunks: bool = typer.Option(
         conversion_config.emit_chunks,
         "--emit-chunks/--no-emit-chunks",
@@ -143,7 +164,11 @@ def convert(
     describe_figures: bool = typer.Option(
         conversion_config.describe_figures,
         "--describe-figures/--no-describe-figures",
-        help="Describe images with little OCR text when vision LLM is enabled",
+        help=(
+            "Caption figures with the vision model. Off by default: captioning "
+            "dominated a measured run, while the rendered crop is inlined either "
+            "way and is the artefact worth trusting"
+        ),
     ),
     report: bool = typer.Option(
         conversion_config.write_export_report,
@@ -171,8 +196,24 @@ def convert(
     conversion_config.fetch_remote_images = fetch_remote_images
     conversion_config.clean_markdown = clean
     conversion_config.extract_tables = tables
+    # One switch, two settings: the legacy per-image path and the PDF figure pass.
+    # Not coupled to --ocr: captioning is opt-in, so an explicit request is
+    # honoured. (It used to default on, which made --no-ocr spend minutes on the
+    # GPU; defaulting it off removes that surprise without overriding the user.)
     conversion_config.describe_figures = describe_figures
     conversion_config.emit_chunks = emit_chunks
+    # "--no-ocr" must also silence figure captions: they are vision-model calls,
+    # and a run asking for no OCR that still spends minutes on the GPU is a trap.
+    figure_config.describe_figures_llm = describe_figures
+    # normalize_model_id, not a hardcoded "ollama:" prefix: the provider gate
+    # accepts "openai:gpt-4o-mini" too, and prefixing that produced the
+    # unresolvable "ollama:openai:gpt-4o-mini".
+    from twomarkdown.agents.image_ocr import normalize_model_id
+
+    if figure_model:
+        llm_config.figure_model = normalize_model_id(figure_model)
+    if review_model:
+        llm_config.review_model = normalize_model_id(review_model)
     conversion_config.write_export_report = report
     if workers is not None:
         conversion_config.parallel_workers = max(1, workers)

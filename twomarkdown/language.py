@@ -54,10 +54,26 @@ _EN_HINTS = frozenset(
 )
 _TOKEN = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ']+")
 
+# Maths is not prose. LaTeX subscripts alone ("a_n", "a_1") contributed 86 of 112
+# "English" hits on a Spanish page, and \in / \to collide with English stopwords,
+# so a maths-heavy document was reported as English.
+_CODE_FENCE = re.compile(r"```.*?```", re.DOTALL)
+_MATH_SPAN = re.compile(r"\$\$.+?\$\$|\$[^$\n]+\$", re.DOTALL)
+_LATEX_COMMAND = re.compile(r"\\[A-Za-z]+")
+_MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
+
+
+def strip_non_prose(text: str) -> str:
+    """Remove code, maths and links so only natural language is counted."""
+    text = _CODE_FENCE.sub(" ", text or "")
+    text = _MARKDOWN_LINK.sub(" ", text)
+    text = _MATH_SPAN.sub(" ", text)
+    return _LATEX_COMMAND.sub(" ", text)
+
 
 def guess_language(text: str, *, sample_chars: int = 4000) -> str | None:
     """Return 'es', 'en', or None when there is too little signal."""
-    sample = (text or "")[:sample_chars].lower()
+    sample = strip_non_prose(text or "")[:sample_chars].lower()
     tokens = _TOKEN.findall(sample)
     if len(tokens) < 20:
         return None

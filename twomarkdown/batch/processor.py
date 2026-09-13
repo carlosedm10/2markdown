@@ -171,6 +171,28 @@ def _cached_ocr_fn(
     return _wrapped
 
 
+def effective_workers() -> int:
+    """How many files to convert at once, given what actually limits the batch.
+
+    A local vision model serves one request at a time, so extra workers never do
+    extra work — they queue on the same GPU permit while their own per-file clock
+    runs. With four workers on 8 handwritten PDFs every file hit the 600s timeout
+    without finishing a page, because three of the four were always waiting. When
+    the model is local the GPU is the batch, so one worker feeds it.
+    """
+    configured = max(1, conversion_config.parallel_workers)
+    if not (conversion_config.ocr_enabled and llm_config.llm_enabled):
+        return configured
+    try:
+        from twomarkdown.agents.image_ocr import is_local_model
+
+        if is_local_model(llm_config.vision_model):
+            return 1
+    except Exception:
+        pass
+    return configured
+
+
 def _resolve_show_progress(show_progress: bool | None, *, verbose: bool) -> bool:
     if show_progress is not None:
         return show_progress
@@ -290,6 +312,17 @@ def _maybe_numbers(path: Path) -> str | None:
         return None
 
 
+def _maybe_matlab(path: Path) -> str | None:
+    if _effective_suffix(path) not in {".m", ".mlx"}:
+        return None
+    from twomarkdown.converter import matlab
+
+    if not matlab.is_matlab(path):
+        return None
+    with span("matlab"):
+        return matlab.convert_matlab(path)
+
+
 def _maybe_xmind(path: Path) -> str | None:
     if _effective_suffix(path) != ".xmind":
         return None
@@ -404,6 +437,11 @@ def _convert_source_to_markdown(
         set_converter("ereader")
         with span("ereader"):
             return ereader.convert_ereader(source_path)
+
+    native = _maybe_matlab(source_path)
+    if native is not None:
+        set_converter("matlab")
+        return native
 
     native = _maybe_xmind(source_path)
     if native is not None:
@@ -528,6 +566,39 @@ def _skip_ocr_if_cancelled(
     return _wrapped
 
 
+INCOMPLETE_MARKER = "> **INCOMPLETO:**"
+
+
+def _incomplete_banner(source_path: Path, budget: float | None) -> str:
+    """Header saying plainly that this file is a partial conversion.
+
+    Without it a truncated file is indistinguishable from a finished one, and
+    the pages that did convert are thrown away for the sake of that ambiguity.
+    """
+    limit = f" tras agotar su presupuesto de {budget / 60:.0f} min" if budget else ""
+    return (
+        f"{INCOMPLETE_MARKER} la conversión de `{source_path.name}` se detuvo"
+        f"{limit}, así que faltan páginas al final. Vuelve a lanzar `make process`: "
+        "las páginas ya transcritas salen de caché y sólo se completan las que "
+        "faltan.\n"
+    )
+
+
+def file_timeout_budget(
+    planned_seconds: float, floor: float | None, factor: float
+) -> float | None:
+    """Seconds a file may take: its own estimated work, never below the floor.
+
+    The floor alone cannot serve both a two-page note and a sixty-call chapter.
+    Keeping this at module level makes the rule testable on its own — the bug it
+    replaces was a deadline computed from the floor while the log reported the
+    per-file budget, so every file was silently capped at the minimum.
+    """
+    if not floor:
+        return None
+    return max(floor, planned_seconds * factor)
+
+
 def _describe_figure_cached(
     image_bytes: bytes, cache: OcrCache | None, language: str | None
 ) -> str:
@@ -571,7 +642,7 @@ def _inline_pdf_figures(
         cache = OcrCache(
             output_dir / ".2markdown-figure-cache",
             backend="figure",
-            model=llm_config.ollama_vision_model,
+            model=llm_config.vision_model,
         )
 
     blocks_by_page: dict[int, list[str]] = {}
@@ -605,8 +676,10 @@ def _convert_one(
     show_progress: bool,
     cancel: threading.Event | None = None,
     planned_output: Path | None = None,
+    timeout_budget: float | None = None,
 ) -> tuple[str, int]:
     _cancelled(cancel)
+    ocr.begin_engine_record()
     engine = _skip_ocr_if_cancelled(ocr_fn, cancel)
     markdown = _convert_source_to_markdown(
         source_path,
@@ -675,14 +748,30 @@ def _convert_one(
             except Exception as exc:
                 logger.debug("PDF asset extract skipped: %s", exc)
 
-    _cancelled(cancel)
+    # Deliberately no _cancelled() here: if the clock ran out mid-file we still
+    # write what converted, flagged, instead of discarding good pages. The
+    # manifest keeps the file as failed, so the next run finishes it.
+    interrupted = cancel is not None and cancel.is_set()
     source_rel = _source_relpath(source_path, input_dir, output_dir)
+    body = markdown
+    if interrupted:
+        body = f"{_incomplete_banner(source_path, timeout_budget)}\n{markdown}"
     content = (
-        build_frontmatter(source_path, input_dir, markdown, source_rel=source_rel)
-        + markdown
+        build_frontmatter(
+            source_path,
+            input_dir,
+            body,
+            source_rel=source_rel,
+            ocr_fallback_pages=ocr.engine_fallback_count(),
+        )
+        + body
     )
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(content, encoding="utf-8")
+    if interrupted:
+        raise ConversionError(
+            f"cancelled; partial output written to {output_md.name}"
+        )
     _write_chunks(output_md, markdown)
     return str(output_md), len(markdown)
 
@@ -784,11 +873,11 @@ def process_batch(
             output_dir / ".2markdown-ocr-cache",
             backend=backend,
             lang=conversion_config.tesseract_lang,
-            model=llm_config.ollama_vision_model if backend == "ollama" else "",
+            model=llm_config.vision_model if backend == "ollama" else "",
         )
         ocr_fn = _cached_ocr_fn(_get_ocr_fn(), cache)
         use_progress = _resolve_show_progress(show_progress, verbose=verbose)
-        workers = max(1, conversion_config.parallel_workers)
+        workers = effective_workers()
         timeout = conversion_config.file_timeout_sec
 
         if dry_run:
@@ -799,6 +888,7 @@ def process_batch(
         # write "X.md" and the later worker would silently discard the earlier.
         planned = plan_output_paths(files, input_dir, output_dir)
 
+        file_budget: dict[Path, float] = {}
         work: list[Path] = []
         for source_path in files:
             output_md = planned[source_path]
@@ -823,6 +913,34 @@ def process_batch(
                 continue
             work.append(source_path)
 
+        # Cost the batch before running it: the cheap PyMuPDF pass that finds
+        # model-bound pages costs seconds, and it buys both an honest up-front
+        # estimate and a sane order to run in.
+        if work:
+            try:
+                from twomarkdown.batch.planner import order_by_cost, plan_batch
+
+                with span("batch.plan"):
+                    batch_plan = plan_batch(work)
+                logger.info("%s", batch_plan.describe())
+                work = order_by_cost(work, batch_plan)
+                # A flat per-file timeout cannot fit both a 2-page note and a
+                # 60-call chapter: on a local model the long files always lost.
+                # Budget each file from its own estimated work instead.
+                file_budget = {
+                    f.path: f.weight * conversion_config.timeout_safety_factor
+                    for f in batch_plan.files
+                }
+            except Exception as exc:
+                logger.debug("Batch planning skipped: %s", exc)
+
+        def _budget_for(source_path: Path) -> float | None:
+            return file_timeout_budget(
+                file_budget.get(source_path, 0.0),
+                timeout,
+                1.0,  # file_budget already carries the safety factor
+            )
+
         def _handle(
             source_path: Path, cancel: threading.Event | None
         ) -> tuple[Path, str, int | None, int, str | None]:
@@ -832,6 +950,7 @@ def process_batch(
                 _out, chars = _convert_one(
                     source_path,
                     planned_output=planned.get(source_path),
+                    timeout_budget=_budget_for(source_path),
                     input_dir=input_dir,
                     output_dir=output_dir,
                     ocr_fn=ocr_fn,
@@ -924,10 +1043,12 @@ def process_batch(
                     pool = ThreadPoolExecutor(max_workers=1)
                     future = pool.submit(_handle, source_path, cancels[source_path])
                     try:
-                        _consume(future.result(timeout=timeout))
+                        _consume(future.result(timeout=_budget_for(source_path)))
                     except FuturesTimeout:
                         cancels[source_path].set()
-                        _consume(_timeout_item(source_path, timeout))
+                        _consume(
+                            _timeout_item(source_path, _budget_for(source_path))
+                        )
                     finally:
                         # Timed-out work may keep running; do not block the batch.
                         pool.shutdown(wait=False)
@@ -961,7 +1082,11 @@ def process_batch(
                     future = pool.submit(_handle, source_path, cancels[source_path])
                     in_flight[future] = source_path
                     pools[future] = pool
-                    deadlines[future] = time.monotonic() + timeout
+                    # The deadline must use this file's own budget: using the
+                    # flat floor here silently capped every file at the minimum,
+                    # while the timeout message still quoted the real budget.
+                    budget = _budget_for(source_path)
+                    deadlines[future] = time.monotonic() + (budget or timeout)
 
             try:
                 _submit_more()
@@ -991,7 +1116,9 @@ def process_batch(
                             source_path = in_flight.pop(future)
                             abandoned.add(future)
                             cancels[source_path].set()
-                            _consume(_timeout_item(source_path, timeout))
+                            _consume(
+                            _timeout_item(source_path, _budget_for(source_path))
+                        )
                             pbar.update(1)
                             _submit_more()
                         if not in_flight:

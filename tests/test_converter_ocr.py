@@ -435,3 +435,90 @@ class TestOcrImageBytesHybrid:
 
         assert result == "LLM text"
         ocr_fn.assert_called_once_with(minimal_png_bytes)
+
+
+class TestForcedVisionFallback:
+    """What happens to a page the vision model was required for, and declined."""
+
+    def test_a_declined_page_is_not_sent_to_the_model_twice(
+        self, minimal_png_bytes: bytes
+    ) -> None:
+        """ocr_image_bytes() — one refusal per image, not two.
+
+        The forced path and the hybrid escalation both called the model with the
+        same bytes, so every failure cost two calls. In one run 121 pages failed
+        and paid for it twice.
+        """
+        from twomarkdown.converter import ocr as ocr_mod
+
+        ocr_fn = MagicMock(return_value="")
+        ocr_mod.begin_engine_record()
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("Tesseract text", 10.0),
+            ),
+        ):
+            result = ocr_image_bytes(
+                minimal_png_bytes,
+                ocr_fn=ocr_fn,
+                llm_min_confidence=75.0,
+                force_llm=True,
+            )
+
+        assert ocr_fn.call_count == 1
+        assert result == "Tesseract text"
+
+    def test_the_fallback_is_recorded_for_the_frontmatter(
+        self, minimal_png_bytes: bytes
+    ) -> None:
+        """ocr_image_bytes() — a page Tesseract stood in for must be countable.
+
+        Otherwise the file names the vision model over text the model never
+        produced, which is how 134 pages of noise shipped unnoticed.
+        """
+        from twomarkdown.converter import ocr as ocr_mod
+
+        ocr_mod.begin_engine_record()
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("Tesseract text", 10.0),
+            ),
+        ):
+            ocr_image_bytes(
+                minimal_png_bytes,
+                ocr_fn=MagicMock(return_value=""),
+                llm_min_confidence=75.0,
+                force_llm=True,
+            )
+
+        assert ocr_mod.engine_fallback_count() == 1
+
+    def test_a_page_the_model_reads_records_no_fallback(
+        self, minimal_png_bytes: bytes
+    ) -> None:
+        """ocr_image_bytes() — the counter must not cry wolf on a good page."""
+        from twomarkdown.converter import ocr as ocr_mod
+
+        ocr_mod.begin_engine_record()
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+        ):
+            result = ocr_image_bytes(
+                minimal_png_bytes,
+                ocr_fn=MagicMock(return_value="# Transcribed"),
+                llm_min_confidence=75.0,
+                force_llm=True,
+            )
+
+        assert result == "# Transcribed"
+        assert ocr_mod.engine_fallback_count() == 0

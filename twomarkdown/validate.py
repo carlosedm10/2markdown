@@ -418,6 +418,23 @@ def _check_language_mismatch(path: Path, text: str) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 
+_INCOMPLETE_RE = re.compile(r"^> \*\*INCOMPLETO:\*\*", re.MULTILINE)
+
+
+def _check_incomplete_conversion(path: Path, text: str) -> list[Finding]:
+    """A file the converter could not finish must not pass silently."""
+    if not _INCOMPLETE_RE.search(text):
+        return []
+    return [
+        Finding(
+            path=path,
+            rule="incomplete_conversion",
+            severity="error",
+            detail="conversion stopped early; re-run to finish the missing pages",
+        )
+    ]
+
+
 def validate_markdown(path: Path, text: str) -> list[Finding]:
     """Run every deterministic rule over one file's already-read text.
 
@@ -429,6 +446,7 @@ def validate_markdown(path: Path, text: str) -> list[Finding]:
     code_free = _strip_fenced_code(text)
 
     findings: list[Finding] = []
+    findings += _safe(_check_incomplete_conversion, path, text)
     findings += _safe(_check_control_chars, path, text)
     findings += _safe(_check_latex_delimiters, path, code_free)
     findings += _safe(_check_unbalanced_math, path, code_free)

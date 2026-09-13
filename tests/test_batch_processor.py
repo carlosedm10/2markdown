@@ -624,3 +624,27 @@ class TestPlanOutputPaths:
         first = plan_output_paths([a, b], tmp_path, out)
         second = plan_output_paths([b, a], tmp_path, out)
         assert first == second
+
+
+class TestPartialOutputOnTimeout:
+    """A file cut off mid-way keeps the pages that did convert."""
+
+    def test_banner_names_the_file_and_the_budget(self) -> None:
+        """_incomplete_banner() — says what stopped and how to finish it."""
+        from twomarkdown.batch.processor import INCOMPLETE_MARKER, _incomplete_banner
+
+        banner = _incomplete_banner(Path("Tema 5.pdf"), 6390.0)
+
+        assert banner.startswith(INCOMPLETE_MARKER)
+        assert "Tema 5.pdf" in banner
+        assert "106 min" in banner
+        assert "make process" in banner
+
+    def test_banner_without_a_budget_still_explains(self) -> None:
+        """_incomplete_banner() — a cancel with no deadline is still explained."""
+        from twomarkdown.batch.processor import _incomplete_banner
+
+        banner = _incomplete_banner(Path("a.pdf"), None)
+
+        assert "presupuesto" not in banner
+        assert "a.pdf" in banner

@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from twomarkdown.config import conversion_config
+from twomarkdown.config import conversion_config, llm_config
 from twomarkdown.converter.pdf_ocr import pdf_meta
 from twomarkdown.language import guess_language
 
@@ -60,6 +60,7 @@ def build_frontmatter(
     markdown: str,
     *,
     source_rel: Path | None = None,
+    ocr_fallback_pages: int = 0,
 ) -> str:
     if source_rel is None:
         try:
@@ -69,6 +70,16 @@ def build_frontmatter(
     else:
         rel = source_rel
     backend = conversion_config.ocr_backend if conversion_config.ocr_enabled else "none"
+    # "ollama" is only the engine family; it says nothing about which model ran,
+    # and reads as wrong when the model is hosted. Record what actually did the
+    # work, so a converted file is traceable to the model that produced it.
+    ocr_model = ""
+    if conversion_config.ocr_enabled and llm_config.llm_enabled:
+        from twomarkdown.agents.image_ocr import normalize_model_id
+
+        ocr_model = normalize_model_id(llm_config.vision_model)
+        if ocr_model:
+            backend = ocr_model.split(":", 1)[0]
     pdf_title, page_count = _pdf_meta(source)
     title = pdf_title or _title_from_markdown(markdown)
     ocr_pages = _ocr_pages(markdown)
@@ -79,6 +90,11 @@ def build_frontmatter(
         ("source", rel.as_posix()),
         ("converted_at", datetime.now(UTC).isoformat()),
         ("ocr_backend", backend),
+        ("ocr_model", ocr_model or None),
+        # Naming the model is only honest while the model did the work. Pages it
+        # declined fall through to Tesseract, whose confident noise on handwriting
+        # is indistinguishable from a transcription unless the file says so.
+        ("ocr_fallback_pages", ocr_fallback_pages or None),
         ("title", title),
         ("page_count", page_count),
         ("language", language),
