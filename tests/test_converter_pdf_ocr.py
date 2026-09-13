@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import fitz
-import pytest
 
 from twomarkdown.config import pdf_ocr_config
 from twomarkdown.converter import pdf_ocr
