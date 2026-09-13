@@ -36,6 +36,12 @@ def is_scrambled_text(text: str) -> bool:
     return singles / len(tokens) > pdf_ocr_config.pdf_text_scramble_ratio
 
 
+def _vision_model_available() -> bool:
+    from twomarkdown.config import conversion_config, llm_config
+
+    return bool(llm_config.llm_enabled and conversion_config.ocr_backend == "ollama")
+
+
 def _raise_if_cancelled(cancel: threading.Event | None) -> None:
     if cancel is not None and cancel.is_set():
         from twomarkdown.converter.markitdown_converter import ConversionError
@@ -122,7 +128,15 @@ def extract_pages(
             )
 
         for i in page_indices:
-            _raise_if_cancelled(cancel)
+            if cancel is not None and cancel.is_set():
+                # Hand back the pages already transcribed instead of discarding
+                # them: the caller writes a partial file rather than nothing.
+                logger.warning(
+                    "Cancelled after %s page(s) of %s; keeping partial OCR",
+                    len(results),
+                    pdf_path.name,
+                )
+                break
             page = opened[i]
             page_text = page.get_text().strip()
             scrambled = is_scrambled_text(page_text)
@@ -138,19 +152,50 @@ def extract_pages(
                     pdf_path.name,
                 )
             png_bytes = _render_page_pixmap(opened, i)
-            _raise_if_cancelled(cancel)
+            if cancel is not None and cancel.is_set():
+                break
             with span("pdf.page_ocr", page=page_num):
                 text = ocr_mod.ocr_image_bytes(
                     png_bytes,
                     ocr_fn=ocr_fn,
                     llm_min_confidence=pdf_ocr_config.pdf_ocr_llm_min_confidence,
-                    force_llm=scrambled,
+                    # Tesseract's confidence does not track whether the maths or
+                    # the handwriting survived: on this corpus its median was 73
+                    # against a threshold of 75, so it vetoed the vision model at
+                    # random and 77 pages came out as noise. When a vision model
+                    # is configured it does the page; Tesseract is the fallback
+                    # for when there is no model, not a gatekeeper for it.
+                    force_llm=scrambled or _vision_model_available(),
                     cancel=cancel,
                 ).strip()
             if text:
+                text = _reviewed(text, pdf_path, page_num)
                 results.append((page_num, text))
 
     return results
+
+
+def _reviewed(text: str, pdf_path: Path, page_num: int) -> str:
+    """Proofread one page's transcription, if a reviewer is configured.
+
+    Text only: the pass reads what was written and fixes what the writing itself
+    contradicts. It is given no image, so it cannot tell what the page holds that
+    the transcription does not — and therefore cannot invent it.
+    """
+    from twomarkdown.agents.page_review import review_enabled, review_page
+
+    if not review_enabled():
+        return text
+    with span("pdf.page_review", page=page_num):
+        reviewed, changes = review_page(text)
+    if changes:
+        logger.info(
+            "Review corrected %s page %s: %s",
+            pdf_path.name,
+            page_num,
+            "; ".join(changes[:5]),
+        )
+    return reviewed
 
 
 def _word_gaps(words: list) -> tuple[dict, list[float]]:
