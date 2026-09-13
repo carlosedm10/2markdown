@@ -40,6 +40,8 @@ DEFAULT_INCLUDE_EXTENSIONS = frozenset(
         ".mp3",
         ".zip",
         ".xmind",
+        ".m",
+        ".mlx",
         ".msg",
         ".eml",
         ".odt",
@@ -61,7 +63,7 @@ SKIP_DIR_NAMES = frozenset({".git", "__pycache__", ".venv", "node_modules"})
 # Fallbacks when .ocr-mode is absent. `make build` writes .ocr-mode, not this file.
 OCR_BACKEND: Literal["tesseract", "ollama"] = "tesseract"
 LLM_ENABLED = False
-OLLAMA_VISION_MODEL = "ollama:moondream"
+OLLAMA_VISION_MODEL = "ollama:qwen2.5vl:32b"
 
 
 def _load_ocr_mode_file() -> dict[str, Any]:
@@ -94,7 +96,13 @@ class ConversionConfig(BaseModel):
     parallel_workers: int = 4
     # Vision OCR runs tens of seconds per page, so the Tesseract-era budget would
     # silently truncate a long scanned document mid-file.
-    file_timeout_sec: float | None = 1800.0 if LLM_ENABLED else 300.0
+    # A file is not slow for being long, it is slow for having many pages. The
+    # budget is therefore per unit of work: each page or figure that needs the
+    # model earns its own allowance, and this is only the floor for small files.
+    # A genuine hang is caught earlier and more precisely by the per-request HTTP
+    # timeout (llm_config.request_timeout_sec), which bounds one call.
+    file_timeout_sec: float | None = 600.0 if LLM_ENABLED else 300.0
+    timeout_safety_factor: float = 3.0
     explode_zip: bool = True
     sniff_filetype: bool = True
 
@@ -120,7 +128,13 @@ class ConversionConfig(BaseModel):
 class PdfOcrConfig(BaseModel):
     pdf_ocr_enabled: bool = True
     pdf_ocr_min_chars: int = 50
-    pdf_ocr_dpi: int = 200
+    # 300, not 200: a page is rendered at this DPI and then fitted to
+    # llm_ocr_max_dimension, so the two together decide whether a prime mark or
+    # the difference between a handwritten f and g survives. Measured on one page
+    # of 17 handwritten integration rules: at 1568px the model misread 3 symbols
+    # and wrote 2 mathematically false rules; at 2200px it misread none and wrote
+    # none. Cost is unchanged in wall clock (128s a page against 87-160s before).
+    pdf_ocr_dpi: int = 300
     pdf_ocr_max_pages: int | None = None
     # Tesseract returns confident nonsense on handwriting, which used to lock the
     # vision model out entirely. Below this mean word confidence, re-OCR with the
@@ -177,30 +191,66 @@ class FigureConfig(BaseModel):
     figure_wide_part_ratio: float = 0.8
     figure_max_wide_parts: float = 0.3
     figure_max_per_page: int = 6
-    # Opt-in: describing figures was 916s of a measured 1092s run, while rendering
-    # the crops costs almost nothing. The crop is the trustworthy artefact — the
-    # description is advisory and unreliable on curve behaviour — so figures are
-    # always rendered and linked inline, and only described when asked.
-    describe_figures_llm: bool = False
+    # On by default. Captioning dominates runtime (916s of a measured 1092s run)
+    # and the caption is advisory — the inlined crop is the artefact to trust — so
+    # turn it off with --no-describe-figures when throughput matters.
+    describe_figures_llm: bool = True
 
 
 class LLMConfig(BaseModel):
+    """Model selection is provider-neutral: "<provider>:<model>".
+
+    pydantic-ai resolves the provider from the prefix, so the same setting takes
+    "ollama:qwen2.5vl:32b", "openai:gpt-5.2" or "anthropic:claude-sonnet-4-5".
+    A bare name is assumed to be Ollama, which keeps older `.ocr-mode` files
+    working. API keys come from the environment (see env_template); only Ollama
+    needs a base URL, because it is the one provider we host ourselves.
+    """
+
     llm_enabled: bool = LLM_ENABLED
     ollama_base_url: str = "http://host.docker.internal:11434/v1"
-    ollama_vision_model: str = OLLAMA_VISION_MODEL
+    vision_model: str = OLLAMA_VISION_MODEL
     # Figure descriptions run on their own, smaller model: it matches model size
     # to stakes (a wrong transcription is permanent, a caption sits beside its
-    # crop), and both stay resident on the host so the two queues run in
-    # parallel. Set to the page model to fall back to one shared queue.
-    ollama_figure_model: str = "ollama:qwen2.5vl:7b"
-    llm_ocr_max_dimension: int = 1568
+    # crop). Two local models do not fit one GPU, so when both are local the page
+    # model is reused — see effective_figure_model().
+    figure_model: str = "ollama:qwen2.5vl:7b"
+    # A second pass that proofreads each page's transcription from the text
+    # alone: a symbol one letter off from the one used on every other line, a
+    # Greek letter written as its Latin lookalike, an unclosed bracket. It never
+    # sees the page, which is what keeps it safe — it cannot know what is missing
+    # and so has no grounds to add anything. A small hosted model suits it: the
+    # edits are tiny, a different model fails in different places, and it
+    # competes for no local VRAM. Empty disables the pass.
+    review_model: str = ""
+    # A correction pass that rewrites is worse than none. The reviewer never sees
+    # the page, so it may only fix characters the text itself gives away; below
+    # this character-level similarity it reworded rather than proofread, and the
+    # transcription is kept. Fixing a symbol moves the ratio by a fraction of a
+    # percent, so this leaves ample room for real corrections.
+    review_min_similarity: float = 0.97
+    # Vision models bill by tiles of pixel dimensions, not file size, so this is
+    # the only setting that changes token cost. Dense handwriting needs every
+    # pixel: on one page of 17 integration rules, 1568 lost three symbols to
+    # lookalikes and produced two false rules, while 2200 produced neither, at
+    # the same wall clock. Below 1024 a transcribed formula degrades badly.
+    llm_ocr_max_dimension: int = 2200
+    # Figure crops are diagrams, not dense prose, and their captions are advisory.
+    # They survive a smaller raster, which is ~30% fewer tokens per caption.
+    llm_figure_max_dimension: int = 1024
     llm_ocr_max_bytes: int = 1_500_000
     llm_ocr_jpeg_quality: int = 85
     # Without this the HTTP client waits forever. A dropped host.docker.internal
     # connection then strands the worker holding the one vision permit, and every
     # other worker blocks behind it: the whole batch deadlocks, not just one file.
-    ollama_connect_timeout_sec: float = 15.0
-    ollama_request_timeout_sec: float = 300.0
+    connect_timeout_sec: float = 15.0
+    request_timeout_sec: float = 300.0
+    # A local model serves one request at a time; a hosted API does not, and
+    # serializing against it would waste most of the wall clock.
+    remote_max_concurrency: int = 8
+    # Hosted providers answer 429 when a batch outruns the account's quota.
+    rate_limit_max_retries: int = 5
+    rate_limit_initial_delay_sec: float = 2.0
 
 
 class MarkItDownConfig(BaseModel):
