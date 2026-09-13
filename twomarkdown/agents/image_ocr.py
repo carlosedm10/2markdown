@@ -231,7 +231,7 @@ def _vision_http_client() -> httpx.AsyncClient:
     """HTTP client with an explicit read timeout.
 
     The default client waits indefinitely. Because every vision call holds the
-    single ``_ollama_vision_lock`` permit, one stalled connection strands its
+    single vision permit, one stalled connection strands its
     worker and blocks every other worker behind it — the batch deadlocks with the
     process at 0% CPU. A read timeout turns that into one failed page.
     """
