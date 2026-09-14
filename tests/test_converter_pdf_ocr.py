@@ -292,7 +292,6 @@ class TestPdfOcrFallback:
         assert pages == [(1, "OCR-1")]
 
 
-
 class TestScrambledTextDetection:
     """Equation-object slides extract as long but shredded token soup."""
 
@@ -329,9 +328,7 @@ class TestScrambledTextDetection:
         assert "Formula iterativa de Newton" in composed
         assert "### OCR" in composed
 
-    def test_no_markitdown_duplicate_when_pages_extracted(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_markitdown_duplicate_when_pages_extracted(self, tmp_path: Path) -> None:
         """compose_pdf_markdown() — a healthy page tree is not appended twice."""
         # Several pages, so the extracted tree is comfortably over the thin-native
         # threshold that still allows the MarkItDown rescue.

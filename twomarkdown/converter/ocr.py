@@ -35,6 +35,7 @@ _engines = threading.local()
 def begin_engine_record() -> None:
     """Start recording which OCR engine answers, for one file."""
     _engines.fallback_pages = []
+    _engines.soft_failure = None
 
 
 def record_engine_fallback() -> None:
@@ -47,6 +48,26 @@ def record_engine_fallback() -> None:
 def engine_fallback_count() -> int:
     """How many pages fell back since `begin_engine_record`."""
     return len(getattr(_engines, "fallback_pages", None) or ())
+
+
+def record_soft_failure(reason: str) -> None:
+    """Note that some LLM-backed stage of this file was silently skipped.
+
+    A local vision model unreachable, or a cloud call out of quota, does not
+    stop the file converting — Tesseract picks up the page, or the pass is
+    just skipped — but reporting that as plain "ok" hides real data loss
+    (see B1/M5 in the desktop-app review). The first reason wins: several
+    stages can each warn once, but the job only carries one into its status.
+    Reset per file by `begin_engine_record`, so it never leaks across files
+    or jobs on a reused worker thread.
+    """
+    if not getattr(_engines, "soft_failure", None):
+        _engines.soft_failure = reason
+
+
+def soft_failure_reason() -> str | None:
+    """This file's first `record_soft_failure` reason, if any."""
+    return getattr(_engines, "soft_failure", None)
 
 
 def markdown_has_usable_text(markdown: str) -> bool:

@@ -85,6 +85,27 @@ if isinstance(_ocr_mode.get("vision_model"), str) and _ocr_mode["vision_model"]:
     OLLAMA_VISION_MODEL = _ocr_mode["vision_model"]
 
 
+def ollama_host() -> str:
+    """The hostname to reach the operator's Ollama at.
+
+    Two very different processes import this config. Inside the backend
+    Docker container (`make up`/`make process`, see `compose.yaml`'s
+    `extra_hosts`) the host's Ollama is reached through the compose-provided
+    `host.docker.internal` alias — `docs/README.md`'s "Host GPU, container
+    CPU". The desktop server (`make app`/`make app-web`) runs uvicorn
+    natively on the host instead (it needs the host GPU, host Ollama, and
+    arbitrary user folders no bind mount can offer — see docs/README.md's Key
+    decisions), where that name does not resolve and Ollama listens on
+    localhost. `/.dockerenv` is the standard marker Docker leaves in every
+    container's root, checked once here rather than per-request since a
+    process does not change container status while it runs.
+    """
+    return "host.docker.internal" if Path("/.dockerenv").is_file() else "localhost"
+
+
+_OLLAMA_HOST = ollama_host()
+
+
 class ConversionConfig(BaseModel):
     """Batch and OCR defaults. Edit here; OCR engine also reads `.ocr-mode`."""
 
@@ -203,12 +224,12 @@ class LLMConfig(BaseModel):
     pydantic-ai resolves the provider from the prefix, so the same setting takes
     "ollama:qwen2.5vl:32b", "openai:gpt-5.2" or "anthropic:claude-sonnet-4-5".
     A bare name is assumed to be Ollama, which keeps older `.ocr-mode` files
-    working. API keys come from the environment (see env_template); only Ollama
-    needs a base URL, because it is the one provider we host ourselves.
+    working. API keys come from the environment (see .env_template); only
+    Ollama needs a base URL, because it is the one provider we host ourselves.
     """
 
     llm_enabled: bool = LLM_ENABLED
-    ollama_base_url: str = "http://host.docker.internal:11434/v1"
+    ollama_base_url: str = f"http://{_OLLAMA_HOST}:11434/v1"
     vision_model: str = OLLAMA_VISION_MODEL
     # Figure descriptions run on their own, smaller model: it matches model size
     # to stakes (a wrong transcription is permanent, a caption sits beside its
@@ -246,11 +267,28 @@ class LLMConfig(BaseModel):
     connect_timeout_sec: float = 15.0
     request_timeout_sec: float = 300.0
     # A local model serves one request at a time; a hosted API does not, and
-    # serializing against it would waste most of the wall clock.
-    remote_max_concurrency: int = 8
+    # serializing against it would waste most of the wall clock. Four, not
+    # more: docs/desktop-app.md and the Pipeline mockup's "4 permisos" both
+    # document this as the number of `_remote_lock` permits, so the default
+    # here must agree with what the UI tells the user to expect.
+    remote_max_concurrency: int = 4
     # Hosted providers answer 429 when a batch outruns the account's quota.
     rate_limit_max_retries: int = 5
     rate_limit_initial_delay_sec: float = 2.0
+    # EXPERIMENTAL. `agents.image_ocr._page_ocr_lock`'s permit count — the
+    # queue that serializes every local (Ollama) call, page OCR and figure
+    # captioning alike, because one GPU normally answers one request at a
+    # time (overlapping requests corrupt Ollama's reply instead of queueing
+    # it — see that module's own docstring). Raising this past 1 asks Ollama
+    # to actually run two local calls at once, which only makes sense on a
+    # machine with GPU headroom to spare; it is not validated against
+    # `gpu_memory.gpu_limit_gb()` the way `resident_gb` is, so it is the
+    # operator's own judgment call, not one this app can verify. Bounded to
+    # 1..2 (see `Settings.local_gpu_permits`) — untested and unmeasured past
+    # 2, unlike every other constant in this file. Never changes
+    # `effective_workers()`: permits let one file's own local calls
+    # interleave, they do not make a batch convert more files at once.
+    local_gpu_permits: int = 1
 
 
 class MarkItDownConfig(BaseModel):

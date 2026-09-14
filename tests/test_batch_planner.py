@@ -241,3 +241,24 @@ class TestLocalPageBudgetMatchesReality:
         plan = planner.FilePlan(Path("a.pdf"), pages=6, vlm_pages=6, figures=0)
 
         assert file_timeout_budget(plan.weight, floor=600.0, factor=3.0) > 2400.0
+
+    def test_the_smaller_local_model_is_not_costed_at_the_bigger_ones_rate(
+        self, monkeypatch
+    ) -> None:
+        """N8: `qwen2.5vl:7b` (the wizard's own "~40 s/página") must not be
+        priced at the ~150s/page measured for `qwen2.5vl:32b` — a single-page
+        7b estimate of "~3 min" against a real ~62s run was a ~3x overshoot,
+        and disagreed with the wizard's own per-model copy for the same
+        model on the same machine."""
+        from twomarkdown.batch import planner
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:7b")
+        one_page = planner.FilePlan(Path("a.pdf"), pages=1, vlm_pages=1, figures=0)
+
+        assert one_page.weight <= 60.0  # nowhere near the ~150s 32b rate
+
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        still_32b = planner.FilePlan(Path("b.pdf"), pages=1, vlm_pages=1, figures=0)
+
+        assert still_32b.weight >= 87.0  # the 32b measurement is unaffected

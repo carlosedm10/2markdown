@@ -268,7 +268,13 @@ def write_pdf(summary: dict[str, Any], output_dir: Path) -> Path:
         page = doc.new_page(width=595, height=842)
         y = 48.0
 
-    def line(text: str, *, size: float = 11, color: tuple[float, ...] = (0.1, 0.1, 0.1), indent: float = 48) -> None:
+    def line(
+        text: str,
+        *,
+        size: float = 11,
+        color: tuple[float, ...] = (0.1, 0.1, 0.1),
+        indent: float = 48,
+    ) -> None:
         nonlocal y
         ensure_space(18)
         page.insert_text((indent, y), text[:110], fontsize=size, color=color)

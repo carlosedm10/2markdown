@@ -448,7 +448,7 @@ class TestIncompleteConversion:
         """validate_markdown() — a truncated conversion must not pass silently."""
         md = tmp_path / "Tema 5.md"
         text = (
-            "---\nsource: \"Tema 5.pdf\"\n---\n"
+            '---\nsource: "Tema 5.pdf"\n---\n'
             "> **INCOMPLETO:** la conversión de `Tema 5.pdf` se detuvo.\n\n"
             "## Page 1\n\ncontenido real\n"
         )
@@ -463,7 +463,7 @@ class TestIncompleteConversion:
     def test_complete_file_is_silent(self, tmp_path) -> None:
         """validate_markdown() — an ordinary file raises no incompleteness flag."""
         md = tmp_path / "Tema 1.md"
-        text = "---\nsource: \"Tema 1.pdf\"\n---\n## Page 1\n\ncontenido\n"
+        text = '---\nsource: "Tema 1.pdf"\n---\n## Page 1\n\ncontenido\n'
         md.write_text(text, encoding="utf-8")
 
         assert not [

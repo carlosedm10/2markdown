@@ -70,7 +70,6 @@ def materialize_local_copy(path: Path, *, suffix: str | None = None) -> Path:
     return Path(handle.name)
 
 
-
 def _looks_like_html(prefix: bytes) -> bool:
     try:
         text = prefix.decode("utf-8")
@@ -140,8 +139,10 @@ def sniff_suffix(path: Path) -> str | None:
         sniffed = ".jpg"
     elif any(prefix.startswith(magic) for magic in _TIFF_MAGICS):
         sniffed = ".tiff"
-    elif len(prefix) >= 12 and prefix[4:8] == b"ftyp" and any(
-        tag in prefix[8:16] for tag in (b"heic", b"heif", b"mif1", b"msf1")
+    elif (
+        len(prefix) >= 12
+        and prefix[4:8] == b"ftyp"
+        and any(tag in prefix[8:16] for tag in (b"heic", b"heif", b"mif1", b"msf1"))
     ):
         sniffed = ".heic"
     elif prefix.startswith(_ZIP_MAGIC):

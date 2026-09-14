@@ -195,6 +195,37 @@ class TestReviewPage:
         assert text == fixed
         assert len(changes) == 1
 
+    def test_out_of_credit_is_reported_as_a_soft_failure(self, monkeypatch) -> None:
+        """review_page() — M5: an exhausted OpenAI balance must not read as
+        plain success; the reviewer skipped the pass and that has to show up
+        somewhere the job can surface, not only in the server's stderr."""
+        from pydantic_ai.exceptions import ModelAPIError
+
+        from twomarkdown.agents import page_review
+        from twomarkdown.config import llm_config
+        from twomarkdown.converter import ocr as ocr_mod
+
+        monkeypatch.setattr(llm_config, "llm_enabled", True)
+        monkeypatch.setattr(llm_config, "review_model", "openai:gpt-4o-mini")
+        monkeypatch.setattr(
+            page_review,
+            "_agent",
+            lambda: (_ for _ in ()).throw(
+                ModelAPIError(
+                    "openai:gpt-4o-mini",
+                    "status_code: 429, body: {'type': 'insufficient_quota', "
+                    "'code': 'credit_balance_exhausted'}",
+                )
+            ),
+        )
+
+        ocr_mod.begin_engine_record()
+        assert review_page(RULES) == (RULES, [])
+
+        reason = ocr_mod.soft_failure_reason()
+        assert reason is not None
+        assert "saldo agotado" in reason
+
 
 class TestLatexCommandsSurfaced:
     """The reviewer knows \\arccot is not a command; it just does not notice."""
