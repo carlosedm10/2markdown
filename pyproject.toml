@@ -8,7 +8,7 @@ dependencies = [
     "markitdown[all]>=0.1.5",
     "pymupdf>=1.24.0",
     "pytesseract>=0.3.13",
-    "pydantic-ai>=1.52.0",
+    "pydantic-ai[groq,mistral]>=1.52.0",
     "pydantic-settings>=2.7.0",
     "typer>=0.15.0",
     "pillow>=11.0.0",
@@ -18,6 +18,9 @@ dependencies = [
     "markdownify>=0.13.0",
     "mobi>=0.3.3",
     "numbers-parser>=4.19.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.48.0",
+    "watchfiles>=1.2.0",
 ]
 
 [project.optional-dependencies]

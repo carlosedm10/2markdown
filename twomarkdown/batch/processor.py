@@ -15,6 +15,7 @@ from pathlib import Path
 import fitz
 from tqdm import tqdm
 
+from twomarkdown.batch import events, gpu_memory
 from twomarkdown.batch.manifest import Manifest, file_checksum
 from twomarkdown.batch.ocr_cache import OcrCache
 from twomarkdown.batch.walker import discover_files
@@ -46,7 +47,13 @@ class BatchResult:
     converted: int = 0
     failed: int = 0
     skipped: int = 0
+    # A file that converted but had a real LLM-backed stage silently skipped
+    # (an unreachable local model, an exhausted cloud quota — see
+    # converter.ocr.record_soft_failure) counts in both `converted` and here,
+    # never in `failed`: the output exists, it is just not what was asked for.
+    warn: int = 0
     failed_paths: list[str] = field(default_factory=list)
+    warn_paths: list[str] = field(default_factory=list)
     planned: list[str] = field(default_factory=list)
 
 
@@ -193,6 +200,34 @@ def effective_workers() -> int:
     return configured
 
 
+def _warn_once_if_figure_model_collapses() -> None:
+    """Log `gpu_memory.effective_figure_model`'s collapse message once for
+    this call, from the config already applied by the caller, rather than
+    leaving it to be discovered once per figure (`agents.image_ocr.
+    effective_figure_model()` asks the same question again for every figure
+    it captions).
+
+    Only for a caller with no job sink attached (the CLI: one `process_batch`
+    call is its whole run). `twomarkdown.server.jobs._run_job` calls
+    `process_batch` once per *file*, not once per job (see that module's own
+    docstring), so logging here as well would print the same message once
+    per file instead of once per job — `jobs.py` already logs it exactly
+    once, at job start, before its per-file loop begins, so this stays
+    silent whenever a sink is attached.
+    """
+    if events.has_sink():
+        return
+    if not (figure_config.describe_figures_llm and llm_config.figure_model):
+        return
+    review_model = llm_config.review_model or None
+    _, message = gpu_memory.effective_figure_model(
+        llm_config.vision_model, llm_config.figure_model, review_model
+    )
+    if message:
+        logger.warning(message)
+        events.log("warning", message)
+
+
 def _resolve_show_progress(show_progress: bool | None, *, verbose: bool) -> bool:
     if show_progress is not None:
         return show_progress
@@ -225,6 +260,7 @@ def _compose_pdf(
     show_progress: bool = False,
     doc: fitz.Document | None = None,
     cancel: threading.Event | None = None,
+    file_index: int | None = None,
 ) -> tuple[str, list[int]]:
     _cancelled(cancel)
     engine = ocr_fn or _get_ocr_fn() or ocr.extract_text_with_tesseract
@@ -247,6 +283,7 @@ def _compose_pdf(
                     show_progress=show_progress,
                     doc=opened,
                     cancel=cancel,
+                    file_index=file_index,
                 )
         _cancelled(cancel)
 
@@ -284,6 +321,7 @@ def _convert_pdf_with_ocr(
     ocr_fn: Callable[[bytes], str] | None = None,
     show_progress: bool = False,
     cancel: threading.Event | None = None,
+    file_index: int | None = None,
 ) -> str:
     markdown = markitdown_converter.convert_file(pdf_path)
     composed, _ = _compose_pdf(
@@ -292,6 +330,7 @@ def _convert_pdf_with_ocr(
         ocr_fn=ocr_fn,
         show_progress=show_progress,
         cancel=cancel,
+        file_index=file_index,
     )
     return composed
 
@@ -412,6 +451,7 @@ def _convert_source_to_markdown(
     ocr_fn: Callable[[bytes], str] | None = None,
     show_progress: bool = False,
     cancel: threading.Event | None = None,
+    file_index: int | None = None,
 ) -> str:
     suffix = _effective_suffix(source_path)
     engine = ocr_fn if ocr_fn is not None else _get_ocr_fn()
@@ -426,7 +466,11 @@ def _convert_source_to_markdown(
     if iwork_config.iwork_enabled and iwork.is_iwork_bundle(source_path):
         set_converter("iwork")
         convert_pdf = lambda p: _convert_pdf_with_ocr(  # noqa: E731
-            p, ocr_fn=engine, show_progress=show_progress, cancel=cancel
+            p,
+            ocr_fn=engine,
+            show_progress=show_progress,
+            cancel=cancel,
+            file_index=file_index,
         )
         with span("iwork"):
             return iwork.convert_bundle(
@@ -483,6 +527,7 @@ def _convert_source_to_markdown(
             ocr_fn=engine,
             show_progress=show_progress,
             cancel=cancel,
+            file_index=file_index,
         )
     elif ocr.is_raster_image(source_path) or suffix == ".svg":
         if not show_progress:
@@ -497,9 +542,7 @@ def _convert_source_to_markdown(
     return markdown
 
 
-def _expand_zips(
-    files: list[Path], input_dir: Path, output_dir: Path
-) -> list[Path]:
+def _expand_zips(files: list[Path], input_dir: Path, output_dir: Path) -> list[Path]:
     if not conversion_config.explode_zip:
         return files
     try:
@@ -600,7 +643,11 @@ def file_timeout_budget(
 
 
 def _describe_figure_cached(
-    image_bytes: bytes, cache: OcrCache | None, language: str | None
+    image_bytes: bytes,
+    cache: OcrCache | None,
+    language: str | None,
+    *,
+    page_number: int | None = None,
 ) -> str:
     if cache is not None:
         hit = cache.get(image_bytes)
@@ -609,7 +656,8 @@ def _describe_figure_cached(
             return hit
     from twomarkdown.converter.ocr import describe_image_bytes
 
-    text = describe_image_bytes(image_bytes, language=language)
+    with events.stage("figures", page=page_number):
+        text = describe_image_bytes(image_bytes, language=language)
     if cache is not None:
         cache.put(image_bytes, text)
     return text
@@ -651,7 +699,10 @@ def _inline_pdf_figures(
         if describe and (cancel is None or not cancel.is_set()):
             try:
                 description = _describe_figure_cached(
-                    figure.path.read_bytes(), cache, language
+                    figure.path.read_bytes(),
+                    cache,
+                    language,
+                    page_number=figure.page_number,
                 ).strip()
                 # Figures are inlined after the clean pass, so the model's
                 # \( .. \) delimiters would otherwise reach the .md unconverted.
@@ -677,6 +728,7 @@ def _convert_one(
     cancel: threading.Event | None = None,
     planned_output: Path | None = None,
     timeout_budget: float | None = None,
+    file_index: int | None = None,
 ) -> tuple[str, int]:
     _cancelled(cancel)
     ocr.begin_engine_record()
@@ -686,6 +738,7 @@ def _convert_one(
         ocr_fn=engine,
         show_progress=show_progress,
         cancel=cancel,
+        file_index=file_index,
     )
     _cancelled(cancel)
     if not markdown or not markdown.strip():
@@ -769,9 +822,7 @@ def _convert_one(
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(content, encoding="utf-8")
     if interrupted:
-        raise ConversionError(
-            f"cancelled; partial output written to {output_md.name}"
-        )
+        raise ConversionError(f"cancelled; partial output written to {output_md.name}")
     _write_chunks(output_md, markdown)
     return str(output_md), len(markdown)
 
@@ -843,6 +894,8 @@ def process_batch(
     verbose: bool = False,
     show_progress: bool | None = None,
     dry_run: bool = False,
+    cancel: threading.Event | None = None,
+    file_index_offset: int = 0,
 ) -> BatchResult:
     input_dir = input_dir.resolve()
     output_dir = output_dir.resolve()
@@ -863,6 +916,21 @@ def process_batch(
             files = discover_files(input_dir, output_dir)
         with span("zip.explode"):
             files = _expand_zips(files, input_dir, output_dir)
+        # Fixed once, from the final (post-expansion) file list, so a file's
+        # index in `file_started`/`file_done`/`page_*` events stays the same
+        # whether it converts first or last — `order_by_cost()` below only
+        # reorders *scheduling*, never this identity.
+        # `file_index_offset` lets a caller that converts one file at a time
+        # through its own outer loop (`server/jobs.py`'s `_run_job`/`retry`,
+        # each calling this with `only_files=[one_file]`) keep every
+        # `file_started`/`file_done`/`page_*` event's `index` equal to that
+        # file's real position in *its own* job, instead of always `0` (this
+        # call's own `files` list has exactly one entry either way). Left at
+        # its default for every other caller (the CLI batch, which always
+        # converts the whole list in one call and needs no offset).
+        file_index_map: dict[Path, int] = {
+            p: i for i, p in enumerate(files, start=file_index_offset)
+        }
         manifest_path = output_dir / ".2markdown-manifest.json"
         manifest = Manifest(manifest_path)
         result = BatchResult()
@@ -878,6 +946,8 @@ def process_batch(
         ocr_fn = _cached_ocr_fn(_get_ocr_fn(), cache)
         use_progress = _resolve_show_progress(show_progress, verbose=verbose)
         workers = effective_workers()
+        events.set_cpu_workers(workers)
+        _warn_once_if_figure_model_collapses()
         timeout = conversion_config.file_timeout_sec
 
         if dry_run:
@@ -889,6 +959,7 @@ def process_batch(
         planned = plan_output_paths(files, input_dir, output_dir)
 
         file_budget: dict[Path, float] = {}
+        file_pages: dict[Path, int] = {}
         work: list[Path] = []
         for source_path in files:
             output_md = planned[source_path]
@@ -931,6 +1002,7 @@ def process_batch(
                     f.path: f.weight * conversion_config.timeout_safety_factor
                     for f in batch_plan.files
                 }
+                file_pages = {f.path: f.pages for f in batch_plan.files}
             except Exception as exc:
                 logger.debug("Batch planning skipped: %s", exc)
 
@@ -941,11 +1013,30 @@ def process_batch(
                 1.0,  # file_budget already carries the safety factor
             )
 
+        def _emit_timeout(source_path: Path, budget: float | None) -> None:
+            # A timed-out file is abandoned from *this* (scheduling) thread,
+            # not the worker that called `events.begin_file` — hence the
+            # explicit index rather than relying on thread-local context.
+            job_index = file_index_map.get(source_path)
+            if job_index is None:
+                return
+            events.end_file(
+                job_index,
+                "failed",
+                budget or 0.0,
+                reason=f"timeout after {budget or timeout}s",
+            )
+
         def _handle(
             source_path: Path, cancel: threading.Event | None
         ) -> tuple[Path, str, int | None, int, str | None]:
             started = time.perf_counter()
             begin_file(source_path)
+            job_index = file_index_map.get(source_path)
+            if job_index is not None:
+                events.begin_file(
+                    job_index, source_path, pages=file_pages.get(source_path, 0)
+                )
             try:
                 _out, chars = _convert_one(
                     source_path,
@@ -956,11 +1047,38 @@ def process_batch(
                     ocr_fn=ocr_fn,
                     show_progress=use_progress and workers == 1,
                     cancel=cancel,
+                    file_index=job_index,
                 )
                 duration_ms = int((time.perf_counter() - started) * 1000)
-                return source_path, "ok", duration_ms, chars, None
+                # Set inside `_convert_one` (same thread) whenever an LLM-backed
+                # stage was silently skipped this file — an unreachable local
+                # model or an exhausted cloud quota (see B1/M5). The file still
+                # converted, so this is "ok" with an asterisk, not "failed".
+                soft_reason = ocr.soft_failure_reason()
+                status = "warn" if soft_reason else "ok"
+                if job_index is not None:
+                    events.end_file(
+                        job_index, status, duration_ms / 1000.0, reason=soft_reason
+                    )
+                return source_path, status, duration_ms, chars, soft_reason
             except Exception as exc:
                 duration_ms = int((time.perf_counter() - started) * 1000)
+                # A cancel token set for *this* file (server/jobs.py's per-file
+                # `file_cancel`, forwarded here as `cancel`) is not a real
+                # failure — `_convert_one` still wrote whatever converted so
+                # far, flagged with the same "conversión incompleta" banner a
+                # timeout produces. The WS event says so (`file_done{status:
+                # "cancelled"}`) rather than "failed", even though the
+                # aggregate `BatchResult`/manifest below still count it under
+                # "failed" (no separate bucket there; the desktop job layer
+                # reads its own `file_cancel`/`file_cancel_requested` state to
+                # tell the two apart regardless of what this tuple says).
+                was_cancelled = cancel is not None and cancel.is_set()
+                event_status = "cancelled" if was_cancelled else "failed"
+                if job_index is not None:
+                    events.end_file(
+                        job_index, event_status, duration_ms / 1000.0, reason=str(exc)
+                    )
                 return source_path, "failed", duration_ms, 0, str(exc)
             finally:
                 end_file()
@@ -977,7 +1095,11 @@ def process_batch(
                 source_path,
                 _mirror_output_path(source_path, input_dir, output_dir),
             )
-            if status == "ok":
+            if status in ("ok", "warn"):
+                # The manifest only knows "ok"/"failed"/"skipped" (batch.manifest
+                # has no warn concept — the file really did convert, on disk it
+                # is indistinguishable from a clean run); "warn" is purely
+                # `BatchResult`'s and the desktop job's way of saying so.
                 manifest.record(
                     source_path,
                     status="ok",
@@ -988,7 +1110,15 @@ def process_batch(
                     char_count=chars,
                 )
                 result.converted += 1
-                if verbose:
+                if status == "warn":
+                    result.warn += 1
+                    result.warn_paths.append(str(source_path))
+                    message = f"Converted with a warning: {source_path}: {error}"
+                    if use_progress:
+                        tqdm.write(message)
+                    else:
+                        logger.warning(message)
+                elif verbose:
                     logger.info("Converted: %s", source_path)
                 return
             if use_progress:
@@ -1018,6 +1148,25 @@ def process_batch(
             return result
 
         cancels = {path: threading.Event() for path in work}
+        # `cancel` (an *external* stop request — `server/jobs.py` passes the
+        # per-file token a cancel endpoint sets) is forwarded onto every
+        # per-file token above so a caller that stops it mid-file gets the
+        # same "finish the current page, keep the partial output" handling
+        # this module already gives a per-file timeout (`_convert_one`'s
+        # `interrupted` branch) — not a harder, mid-page-unsafe stop. A daemon
+        # watcher (not a poll loop) so it costs nothing while `cancel` is
+        # never set, which is every call this module's own CLI callers make
+        # (they never pass `cancel` at all).
+        _cancel_watcher: threading.Thread | None = None
+        if cancel is not None:
+
+            def _forward_cancel() -> None:
+                cancel.wait()
+                for ev in cancels.values():
+                    ev.set()
+
+            _cancel_watcher = threading.Thread(target=_forward_cancel, daemon=True)
+            _cancel_watcher.start()
 
         if not timeout:
             with tqdm(
@@ -1029,7 +1178,7 @@ def process_batch(
                 for source_path in pbar:
                     if use_progress:
                         pbar.set_postfix_str(source_path.name, refresh=False)
-                    _consume(_handle(source_path, None))
+                    _consume(_handle(source_path, cancels[source_path]))
         elif workers == 1:
             with tqdm(
                 work,
@@ -1046,9 +1195,9 @@ def process_batch(
                         _consume(future.result(timeout=_budget_for(source_path)))
                     except FuturesTimeout:
                         cancels[source_path].set()
-                        _consume(
-                            _timeout_item(source_path, _budget_for(source_path))
-                        )
+                        budget = _budget_for(source_path)
+                        _emit_timeout(source_path, budget)
+                        _consume(_timeout_item(source_path, budget))
                     finally:
                         # Timed-out work may keep running; do not block the batch.
                         pool.shutdown(wait=False)
@@ -1116,9 +1265,9 @@ def process_batch(
                             source_path = in_flight.pop(future)
                             abandoned.add(future)
                             cancels[source_path].set()
-                            _consume(
-                            _timeout_item(source_path, _budget_for(source_path))
-                        )
+                            timeout_budget = _budget_for(source_path)
+                            _emit_timeout(source_path, timeout_budget)
+                            _consume(_timeout_item(source_path, timeout_budget))
                             pbar.update(1)
                             _submit_more()
                         if not in_flight:

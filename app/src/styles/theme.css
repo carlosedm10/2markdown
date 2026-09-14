@@ -1,0 +1,2038 @@
+:root {
+  --ground: #f3f4f0;
+  --surface: #ffffff;
+  --sunk: #e9ebe5;
+  --line: #d6d9d1;
+  --line-soft: #e4e6e0;
+  --ink: #14181f;
+  --ink-2: #3c4450;
+  --muted: #6b7482;
+  --hl: #ffd84d;
+  --hl-soft: #fff1b8;
+  --hl-ink: #7a5b00;
+  --ok: #2f9e6a;
+  --ok-soft: #ddf3e8;
+  --warn: #d9822b;
+  --warn-soft: #fbe9d6;
+  --bad: #c9463d;
+  --bad-soft: #f8dedc;
+  --paper: #fbfaf4;
+  --rule: #cfd9e6;
+  --pen: #22355b;
+  --shadow: 0 1px 2px rgba(20, 24, 31, 0.06), 0 12px 32px -12px rgba(20, 24, 31, 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #15181d;
+    --surface: #1e2229;
+    --sunk: #181b21;
+    --line: #333944;
+    --line-soft: #2a2f38;
+    --ink: #e8eaed;
+    --ink-2: #c4c9d1;
+    --muted: #98a1ad;
+    --hl: #ffd84d;
+    --hl-soft: #3a3212;
+    --hl-ink: #ffd84d;
+    --ok: #4cc08a;
+    --ok-soft: #173226;
+    --warn: #e89a4c;
+    --warn-soft: #3a2a18;
+    --bad: #e06a61;
+    --bad-soft: #3b1f1d;
+    --paper: #f2efe4;
+    --rule: #c3cdd9;
+    --pen: #22355b;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #15181d;
+  --surface: #1e2229;
+  --sunk: #181b21;
+  --line: #333944;
+  --line-soft: #2a2f38;
+  --ink: #e8eaed;
+  --ink-2: #c4c9d1;
+  --muted: #98a1ad;
+  --hl: #ffd84d;
+  --hl-soft: #3a3212;
+  --hl-ink: #ffd84d;
+  --ok: #4cc08a;
+  --ok-soft: #173226;
+  --warn: #e89a4c;
+  --warn-soft: #3a2a18;
+  --bad: #e06a61;
+  --bad-soft: #3b1f1d;
+  --paper: #f2efe4;
+  --rule: #c3cdd9;
+  --pen: #22355b;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.55 "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: "Bricolage Grotesque", "IBM Plex Sans", sans-serif;
+  text-wrap: balance;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+h2 {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+p {
+  margin: 0;
+}
+a {
+  color: inherit;
+}
+code,
+.mono {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.92em;
+}
+.eyebrow {
+  font-size: 11.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.mark {
+  background: linear-gradient(transparent 55%, var(--hl) 55%, var(--hl) 92%, transparent 92%);
+  padding: 0 2px;
+}
+.hand {
+  font-family: "Caveat", cursive;
+  color: var(--hl-ink);
+  font-size: 1.25em;
+  line-height: 1.1;
+}
+
+/* app shell */
+.app-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  height: 100vh;
+  background: var(--ground);
+}
+.rail {
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  padding: 18px 12px;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+.rail .brand {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 800;
+  font-size: 17px;
+  padding: 6px 10px 18px;
+}
+.rail a,
+.rail button.navlink {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.rail a.active,
+.rail button.navlink.active {
+  background: var(--sunk);
+  color: var(--ink);
+}
+.rail .foot {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.main {
+  overflow-y: auto;
+  padding: 32px 40px 60px;
+}
+.mainhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 22px;
+}
+.mainhead .sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Wizard step 3 + Convertir header — same three effective-settings lines in
+   both places (see components/SettingsSummary.tsx). */
+.settings-summary {
+  display: grid;
+  gap: 4px;
+  background: var(--sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin-bottom: 16px;
+}
+.settings-summary b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* buttons/pills/fields shared with mockup */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-weight: 600;
+  font-size: 13.5px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn.primary {
+  background: var(--ink);
+  color: var(--ground);
+  border-color: var(--ink);
+}
+.btn.hl {
+  background: var(--hl);
+  color: #14181f;
+  border-color: var(--hl);
+}
+.btn.ghost {
+  border-color: transparent;
+  color: var(--ink-2);
+  background: transparent;
+}
+.btn.small {
+  padding: 5px 10px;
+  font-size: 12.5px;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.pill.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.pill.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.pill.bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.pill.hlp {
+  background: var(--hl-soft);
+  color: var(--hl-ink);
+}
+.pill.mute {
+  background: var(--sunk);
+  color: var(--muted);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+.field {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--surface);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+input[type="text"],
+input[type="password"],
+input[type="number"],
+textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+select.pick {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 26px 6px 8px;
+  font: 12px "IBM Plex Mono", monospace;
+  color: var(--ink);
+  background: var(--sunk)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236B7482'/%3E%3C/svg%3E")
+    no-repeat right 8px center;
+  cursor: pointer;
+}
+/* ModelPicker combobox (components/ModelPicker.tsx) — replaces a native
+   <select> so a catalog of hundreds of cloud ids stays searchable. Sizing
+   mirrors select.pick so it drops into the same layouts (Pipeline's stage
+   cards, the wizard's Personalizado card) without extra spacing rules. */
+.combo {
+  position: relative;
+  width: 100%;
+  /* Grid/flex items default to `min-width: auto` (their content's
+   * min-content size), which lets a long custom model id (e.g.
+   * "openai:an-extremely-long-…") force this box — and the grid track or
+   * flex row it sits in — wider than its card, blowing past the layout
+   * instead of the trigger's own `.combo-value` ellipsis ever kicking in.
+   * `min-width: 0` lets `.combo` (and everything inside it) actually shrink
+   * to the space it's given. */
+  min-width: 0;
+  font: 12px "IBM Plex Mono", monospace;
+}
+.combo-trigger {
+  display: flex;
+  /* N17: the caret must never wrap to a second line — it used to be a
+   * direct flex-wrap:wrap child alongside the value/pills, so at narrow
+   * widths (e.g. Pipeline's flow nodes at 1024px) it dropped below them
+   * instead of staying pinned at the end of the row, and the value's own
+   * ellipsis kicked in too early ("Sin revi…") because it was sharing the
+   * row's shrink budget with a caret that could otherwise just wrap away.
+   * `.combo-main` (value + pills) is the only child allowed to wrap; the
+   * caret sits outside it as a fixed-width column that's never touched. */
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  /* A flex item's implicit min-width is `auto` (its content's min-content
+   * size), which can exceed a fixed-width container — inside Pipeline's flow
+   * diagram, `.flow-node` is an absolutely-positioned box with an explicit
+   * (percentage) width, so a long id + pills used to spill out past the
+   * node's edge instead of shrinking. `min-width: 0` here lets the trigger
+   * (and `.combo-value` below) actually shrink to fit. */
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: var(--sunk);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.combo-trigger:focus-visible {
+  outline: 2px solid var(--pen);
+  outline-offset: 1px;
+}
+.combo-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.combo-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combo-pills {
+  display: flex;
+  /* Lets individual pills wrap onto a second line within `.combo-main`
+   * rather than the group insisting on its full (unshrinkable) content
+   * width and spilling past a narrow node's edge — `flex: 0 0 auto` never
+   * let it shrink at all. */
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+.combo-caret {
+  flex: none;
+  width: 10px;
+  height: 6px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236B7482'/%3E%3C/svg%3E")
+    no-repeat center;
+}
+.combo-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+}
+/* Portaled to document.body (see ModelPicker.tsx) so it always paints above
+ * the trigger's own stacking context — e.g. Pipeline's flow diagram, where
+ * the trigger sits inside an absolutely-positioned `.flow-node` over an SVG
+ * full of its own siblings. `position`/`top`/`left`/`width` come from an
+ * inline style computed off the trigger's bounding rect instead of the
+ * `top/left/right` above, which only work for an in-flow, non-portaled
+ * panel. */
+.combo-panel-portal {
+  z-index: 1000;
+  min-width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: grid;
+  gap: 6px;
+}
+.combo-search {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--ground);
+}
+.combo-search:focus-visible {
+  outline: 2px solid var(--pen);
+  outline-offset: 1px;
+}
+.combo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.combo-section-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.combo-group-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 6px 8px 2px;
+}
+.combo-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.combo-option:hover,
+.combo-option.active {
+  background: var(--hl-soft);
+}
+.combo-option.sel {
+  font-weight: 600;
+}
+.combo-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combo-option-sub {
+  color: var(--muted);
+  font-size: 10.5px;
+  flex: none;
+  margin-left: auto;
+}
+.combo-option.combo-custom {
+  color: var(--ink-2);
+  font-style: italic;
+}
+.combo-more,
+.combo-empty {
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--line);
+  position: relative;
+  border: none;
+  cursor: pointer;
+  flex: none;
+}
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: left 0.15s ease;
+}
+.toggle.on {
+  background: var(--ok);
+}
+.toggle.on::after {
+  left: 18px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 14px 16px;
+}
+
+/* wizard */
+/* auto-fit instead of a fixed repeat(3, ...): the step-2 grid now holds 4
+ * cards (Rápido / IA local / IA nube / Personalizado — see Wizard.tsx), and a
+ * fixed column count clipped the row the first time this screen grew past 3
+ * cards at a 1024px window (220px rail + 40px main padding either side left
+ * only ~724px of content, less than 3 * 240px + gaps). auto-fit instead lets
+ * the browser pick however many 240px-minimum columns actually fit — 2 at
+ * 1024px, all 4 in one row at 1440px — with no explicit breakpoint needed to
+ * avoid the clip.
+ */
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+@media (max-width: 900px) {
+  .choices {
+    grid-template-columns: 1fr;
+  }
+}
+.choice {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 260px;
+  min-width: 0;
+  position: relative;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.choice .field {
+  flex-wrap: wrap;
+}
+.choice.sel {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+.choice .name {
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px 8px;
+}
+.choice .desc {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.choice .hw {
+  background: var(--sunk);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.choice .hw .mono {
+  overflow-wrap: break-word;
+}
+.choice .foot {
+  margin-top: auto;
+}
+.stepper {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+.stepper .s {
+  width: 26px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.stepper .s.on {
+  background: var(--ink);
+}
+.wiz .nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 22px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.wiz .nav .r {
+  display: flex;
+  gap: 8px;
+}
+
+/* convert */
+.conv {
+  display: grid;
+  grid-template-columns: 1.25fr 0.85fr;
+  gap: 22px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .conv {
+    grid-template-columns: 1fr;
+  }
+}
+.mode {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+}
+.mode button {
+  padding: 6px 12px;
+  color: var(--muted);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.mode button.on {
+  background: var(--ink);
+  color: var(--ground);
+}
+.drop {
+  border: 2px dashed var(--line);
+  border-radius: 12px;
+  padding: 22px;
+  display: grid;
+  gap: 12px;
+  background: var(--sunk);
+}
+.drop.drag {
+  border-color: var(--hl);
+  background: var(--hl-soft);
+}
+.drop .head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.drop .head b {
+  font-size: 15px;
+}
+.drop .head span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.files {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.files .f {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.files .f .ico {
+  width: 18px;
+  height: 22px;
+  border: 1.5px solid var(--ink-2);
+  border-radius: 2px;
+  position: relative;
+  opacity: 0.7;
+}
+.files .f .meta {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.pickrow {
+  display: flex;
+  gap: 8px;
+}
+.pickrow input {
+  flex: 1;
+}
+.presets {
+  display: grid;
+  gap: 8px;
+}
+.preset {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  cursor: pointer;
+  background: var(--surface);
+}
+.preset .radio {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  margin-top: 3px;
+}
+.preset.sel {
+  border-color: var(--ink);
+}
+.preset.sel .radio {
+  border: 5px solid var(--ink);
+}
+.preset b {
+  display: block;
+  font-size: 14px;
+}
+.preset span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.preset .edit {
+  color: var(--muted);
+  font-size: 12px;
+  align-self: center;
+}
+.out {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  margin-top: 10px;
+  background: var(--surface);
+}
+.out .path {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.out .k {
+  color: var(--muted);
+  font-size: 12px;
+  display: block;
+}
+.est {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.est .hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 12px;
+  background: var(--sunk);
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.est .big {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--line-soft);
+}
+.est .big div {
+  padding: 12px;
+}
+.est .big div + div {
+  border-left: 1px solid var(--line-soft);
+}
+.est .big .n {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 800;
+  font-size: 24px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.est .big .l {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.est .rows {
+  display: grid;
+  font-size: 12.5px;
+}
+.est .rows .r-wrap {
+  border-bottom: 1px solid var(--line-soft);
+}
+.est .rows .r-wrap:last-child {
+  border-bottom: none;
+}
+.est .rows .r {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  padding: 6px 12px;
+  font-variant-numeric: tabular-nums;
+}
+.est .rows .r .m {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+}
+.est .alt {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+  background: var(--sunk);
+  border-top: 1px solid var(--line-soft);
+}
+.est .alt a {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  color: var(--ink-2);
+}
+.block {
+  margin-top: 14px;
+  border: 1px solid var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  display: grid;
+  gap: 4px;
+}
+.block b {
+  color: var(--bad);
+}
+.block span {
+  color: var(--ink-2);
+}
+.block.warnblock {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.block.warnblock b {
+  color: var(--warn);
+}
+.addprice {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.addprice label {
+  display: grid;
+  gap: 3px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.addprice input {
+  width: 120px;
+  font: 12px "IBM Plex Mono", monospace;
+}
+.conv .cta {
+  grid-column: 1/-1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 18px;
+  margin-top: 4px;
+}
+.conv .cta .adv {
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* queue */
+.qhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.qhead .big {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 600;
+  font-size: 20px;
+}
+.qhead .eta {
+  color: var(--muted);
+  font-size: 13px;
+}
+.qbar {
+  height: 6px;
+  background: var(--sunk);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+.qbar i {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.3s ease;
+}
+.live {
+  display: grid;
+  gap: 4px;
+  margin: -8px 0 16px;
+}
+.lv {
+  display: grid;
+  grid-template-columns: 78px 84px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  border: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+.lv.hot {
+  background: var(--hl-soft);
+  border-color: var(--hl);
+}
+.lv.idle {
+  opacity: 0.55;
+}
+.lv .who {
+  font-weight: 600;
+}
+.lv .sem {
+  display: flex;
+  gap: 4px;
+}
+.lv .sem i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: block;
+  border: 1.5px solid var(--line);
+}
+.lv .sem i.busy {
+  background: var(--hl);
+  border-color: var(--hl);
+}
+.lv .sem i.free {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+}
+.lv .what {
+  color: var(--ink-2);
+}
+.lv .wait {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.queue {
+  display: grid;
+  gap: 2px;
+}
+.q {
+  display: grid;
+  grid-template-columns: 20px 1fr minmax(220px, auto) 60px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+.q .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.q:nth-child(odd) {
+  background: var(--sunk);
+}
+.q .st {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+}
+.q .st.ok {
+  background: var(--ok);
+  color: #fff;
+}
+.q .st.run {
+  border: 2px solid var(--ink);
+  border-right-color: transparent;
+  animation: spin 1s linear infinite;
+}
+.q .st.wait {
+  border: 1.5px solid var(--line);
+}
+.q .st.warn {
+  background: var(--warn);
+  color: #fff;
+}
+.q .st.bad {
+  background: var(--bad);
+  color: #fff;
+}
+.q .name {
+  display: grid;
+}
+.q .name small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.q .prog {
+  display: grid;
+  gap: 4px;
+}
+.q .prog .t {
+  font-size: 12px;
+  color: var(--muted);
+}
+.q .prog .b {
+  height: 4px;
+  background: var(--line-soft);
+  border-radius: 2px;
+}
+.q .prog .b i {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  border-radius: 2px;
+}
+.q .tm {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.qfoot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 13px;
+  color: var(--muted);
+}
+/* N7: the running "Detalles técnicos" footer and the done "Convertir otra
+ * carpeta" footer render in the exact same JSX position, one replacing the
+ * other on job completion. Without a shared reserved height the CTA's row
+ * could still land at a y a queue row's "✕ Quitar"/"✕ Cancelar" occupied a
+ * moment earlier if either footer's natural content height ever differs —
+ * this pins both to the same band regardless of content. */
+.qfoot-reserve {
+  min-height: 40px;
+}
+/* The log toggle+<pre> sits beside the action buttons in the same flex row.
+ * Wide log lines (a full URL, a JSON body) have no natural break point, so
+ * without min-width: 0 the flex item refuses to shrink below its content's
+ * width and squeezes the button group instead — see N6 in docs/desktop-app.md. */
+.qfoot > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.qfoot > div:first-child pre {
+  overflow-x: auto;
+}
+.qfoot > div:last-child {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.qfoot details summary {
+  cursor: pointer;
+  list-style: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+}
+.qfoot details summary::-webkit-details-marker {
+  display: none;
+}
+.qfoot pre {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* review */
+.rev {
+  display: grid;
+  grid-template-columns: 170px 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 1000px) {
+  .rev {
+    grid-template-columns: 1fr;
+  }
+}
+.pages {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  font-size: 12.5px;
+}
+.pages .p {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  cursor: pointer;
+  border: none;
+  background: none;
+  font: inherit;
+  width: 100%;
+}
+.pages .p.cur {
+  background: var(--sunk);
+  color: var(--ink);
+  font-weight: 600;
+}
+.pages .file {
+  font-weight: 600;
+  padding: 4px 8px;
+  color: var(--ink);
+}
+.pages .file + .file {
+  margin-top: 8px;
+}
+.pane {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--surface);
+  min-width: 0;
+}
+.pane .ph {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.paper {
+  background: var(--paper);
+  padding: 16px;
+  min-height: 340px;
+  display: grid;
+  place-items: center;
+}
+.paper img {
+  max-width: 100%;
+  max-height: 420px;
+  border: 1px solid var(--rule);
+}
+.md {
+  padding: 16px 18px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--ink-2);
+  min-height: 300px;
+  white-space: pre-wrap;
+}
+.md textarea {
+  width: 100%;
+  height: 340px;
+  border: none;
+  resize: vertical;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.75;
+  background: transparent;
+  outline: none;
+}
+.view-toggle {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+}
+.view-toggle button {
+  padding: 2px 8px;
+  color: var(--muted);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.view-toggle button.on {
+  background: var(--ink);
+  color: var(--ground);
+}
+.rendered {
+  padding: 18px 20px;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--ink-2);
+  min-height: 300px;
+  min-width: 0;
+  overflow-x: auto;
+}
+.rendered img {
+  max-width: 100%;
+  height: auto;
+}
+.rendered h1,
+.rendered h2,
+.rendered h3 {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 10px;
+}
+.rendered ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.rendered p {
+  margin: 0 0 10px;
+}
+.katex-display {
+  margin: 0;
+}
+.fig-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--sunk);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.rev-foot {
+  grid-column: 1/-1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.changes {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.changes .c {
+  background: var(--hl-soft);
+  color: var(--hl-ink);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.changes .c button {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  padding: 0;
+}
+
+/* pipeline */
+.pipe {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+@media (max-width: 1000px) {
+  .pipe {
+    grid-template-columns: 1fr;
+  }
+}
+.stage {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  position: relative;
+  background: var(--surface);
+}
+.stage .no {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.stage b {
+  font-size: 13.5px;
+  line-height: 1.25;
+}
+.stage .what {
+  font-size: 12px;
+  color: var(--muted);
+}
+.stage .sel {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  font-family: "IBM Plex Mono", monospace;
+  background: var(--sunk);
+}
+.stage .sel.none {
+  color: var(--muted);
+  border-style: dashed;
+  background: transparent;
+  font-family: "IBM Plex Sans", sans-serif;
+}
+.stage .tag {
+  position: absolute;
+  top: -9px;
+  right: 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hl);
+  color: #14181f;
+}
+.stage.on-gpu {
+  border-color: var(--hl);
+}
+.stage.on-cloud {
+  border-color: var(--ink-2);
+}
+.stage.on-cloud .tag {
+  background: var(--ink);
+  color: var(--ground);
+}
+.stage.on-cpu .tag {
+  background: var(--sunk);
+  color: var(--muted);
+}
+.stage.bad {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 1px var(--bad);
+}
+.simtop {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+@media (max-width: 780px) {
+  .simtop {
+    grid-template-columns: 1fr;
+  }
+}
+.loadinfo {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.slider {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+.slider input {
+  flex: 1;
+  accent-color: var(--ink);
+}
+.slider .mono {
+  font-size: 13px;
+  min-width: 1.5em;
+  text-align: right;
+}
+.lanes {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.lanes .hd {
+  padding: 10px 14px;
+  background: var(--sunk);
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: flex;
+  justify-content: space-between;
+}
+.lane {
+  display: grid;
+  grid-template-columns: 150px 1fr 200px;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+@media (max-width: 780px) {
+  .lane {
+    grid-template-columns: 1fr;
+  }
+}
+.lane .who {
+  display: grid;
+  gap: 2px;
+}
+.lane .who span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.lane .sem {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.lane .sem i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: block;
+  border: 1.5px solid var(--line);
+}
+.lane .sem i.busy {
+  background: var(--hl);
+  border-color: var(--hl);
+}
+.lane .sem i.free {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+}
+.lane .sem small {
+  color: var(--muted);
+  margin-left: 6px;
+}
+.lane .fx {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.lane.hot {
+  background: var(--hl-soft);
+}
+.lane.idle {
+  opacity: 0.55;
+}
+.gantt .g {
+  height: 14px;
+  background: var(--sunk);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+.gantt .g i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  transition: width 0.35s ease;
+  background: var(--line);
+}
+.lane.hot .gantt .g i {
+  background: var(--hl);
+}
+.verdict {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--sunk);
+  font-size: 13px;
+}
+@media (max-width: 820px) {
+  .verdict {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.verdict .n {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 800;
+  font-size: 28px;
+  line-height: 1;
+  min-width: 90px;
+}
+.verdict .n small {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--muted);
+  display: block;
+  margin-top: 4px;
+}
+.verdict .tip {
+  color: var(--ink-2);
+}
+.verdict .tip b {
+  color: var(--ink);
+}
+.verdict .tip a {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+.ram {
+  display: grid;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.ram .bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--sunk);
+  overflow: hidden;
+  display: flex;
+}
+.ram .bar i {
+  display: block;
+  height: 100%;
+  transition: width 0.35s ease, background 0.35s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ram .bar i {
+    transition: none;
+  }
+}
+
+/* pipeline — flow diagram (files → stages → markdown). Parallelism and the
+ * bottleneck are topology here, not a separate lane list: see the
+ * `FlowDiagram` component in Pipeline.tsx for the coordinate space this CSS
+ * assumes (a 1200×480 viewBox, shared by the SVG connectors and the plain
+ * HTML `.flow-node`s positioned on top of them via left/top percentages). */
+.flow-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1200 / 480;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.flow-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.flow-svg path {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.6;
+  transition: d 0.35s ease, stroke 0.35s ease, stroke-width 0.35s ease;
+}
+.flow-svg path.hot {
+  stroke: var(--hl);
+  stroke-width: 2.6;
+}
+.flow-svg circle.dot {
+  fill: var(--muted);
+}
+.flow-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 6px 9px;
+  display: grid;
+  /* A bare `display: grid` gives this box a single implicit column sized by
+   * "auto", which CSS Grid computes from its content's MAX-CONTENT width —
+   * for a ModelPicker's `.combo-value` (nowrap, ellipsis) that's the full
+   * unwrapped id, so a long custom model id used to blow this node out past
+   * its own explicit (percentage) width instead of ever reaching the
+   * ellipsis. `minmax(0, 1fr)` caps the column at the box's actual width so
+   * children can shrink into it, matching the fix applied to the wizard's
+   * "Personalizado" card (see Wizard.tsx). */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  align-content: center;
+  font-size: 11.5px;
+  box-shadow: var(--shadow);
+  transition: left 0.35s ease, top 0.35s ease, width 0.35s ease, height 0.35s ease, opacity 0.35s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-svg path,
+  .flow-node {
+    transition: none;
+  }
+}
+.flow-node .fn-title {
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.flow-node .fn-sub,
+.flow-node .fn-anno {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  /* Reserve this row's height up front so a CPU/cloud fan node never grows
+     after layout and overlaps the next lane's ghost card (flow-issues.md
+     N8) — the annotation is short ("0 s · $0") but always present. */
+  min-height: 13px;
+}
+.fn-note {
+  color: var(--warn);
+  font-size: 10px;
+  line-height: 1.3;
+  margin-top: 2px;
+}
+.flow-node .fn-cap {
+  color: var(--hl-ink);
+  font-weight: 700;
+  font-size: 10px;
+  /* Reserved even when empty (no bottleneck) so the card's height doesn't
+     change when a run becomes/stops being the bottleneck. */
+  min-height: 12px;
+}
+.flow-node.source,
+.flow-node.sink {
+  align-items: center;
+  justify-items: center;
+  text-align: center;
+  background: var(--sunk);
+  border-style: dashed;
+}
+.flow-node.gpu {
+  border-color: var(--hl);
+}
+.flow-node.cloud {
+  border-color: var(--ink-2);
+}
+.flow-node.cpu {
+  border-color: var(--line);
+}
+.flow-node.none {
+  border-style: dashed;
+  color: var(--muted);
+  background: transparent;
+}
+.flow-node.bottleneck {
+  background: var(--hl-soft);
+  border-color: var(--hl);
+  box-shadow: 0 0 0 2px var(--hl);
+}
+.flow-node.gpu.bottleneck.funnel {
+  box-shadow: 0 0 0 2px var(--hl), var(--shadow);
+}
+.flow-node.gpu.blocked {
+  background: var(--bad-soft);
+  border-color: var(--bad);
+  box-shadow: 0 0 0 2px var(--bad);
+}
+.flow-node.ghost {
+  opacity: 0.6;
+  padding: 4px 6px;
+  align-items: center;
+  justify-items: center;
+  text-align: center;
+  box-shadow: none;
+}
+.flow-node .fn-ghost-label {
+  color: var(--ink-2);
+  font-size: 10px;
+}
+.flow-node.merged {
+  gap: 6px;
+}
+.flow-node .fn-merged-hd {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--hl-ink);
+  text-align: center;
+}
+.flow-node .fn-merged-row {
+  display: grid;
+  /* `1fr` alone still floors each column at its content's max-content width
+   * (same grid-blowout as `.flow-node` above) — `minmax(0, 1fr)` is needed
+   * for the merged GPU node's two columns to actually shrink a long custom
+   * model id down to its own `.combo-value` ellipsis. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.flow-node .fn-merged-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  align-content: start;
+}
+.flow-rail-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 10.5px;
+  color: var(--muted);
+  text-align: center;
+}
+.flow-lane-overflow {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+.flow-node .combo {
+  font-size: 11px;
+}
+.flow-note {
+  margin-top: 10px;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border: 1px solid var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.flow-note b {
+  display: block;
+  margin-bottom: 2px;
+}
+.flow-note span {
+  color: var(--ink-2);
+}
+.flow-note.warn {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.verdict.standalone {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  border-top: 1px solid var(--line);
+}
+
+/* equipo */
+.kit {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+@media (max-width: 780px) {
+  .kit {
+    grid-template-columns: 1fr;
+  }
+}
+.kit .it {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: start;
+  background: var(--surface);
+}
+.kit .it b {
+  display: block;
+  font-size: 13.5px;
+}
+.kit .it span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.sync {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  background: var(--surface);
+}
+/* A <button class="sync"> (the "add sync" and preset rows, made real
+   buttons for keyboard/AT reachability) still needs the UA button reset the
+   plain <div> version never had to fight. */
+button.sync {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+button.sync:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.sync .paths {
+  display: grid;
+  gap: 3px;
+}
+.sync .paths .p {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.sync .paths .p b {
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--muted);
+  font-weight: 500;
+  display: inline-block;
+  width: 56px;
+}
+.sync .paths small {
+  color: var(--muted);
+}
+.group {
+  display: grid;
+  gap: 14px;
+}
+.group h4 {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 600;
+  margin: 0;
+}
+.set {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 22px;
+}
+@media (max-width: 780px) {
+  .set {
+    grid-template-columns: 1fr;
+  }
+}
+.set nav {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  font-size: 13.5px;
+}
+.set nav a {
+  text-decoration: none;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.set nav a.cur {
+  background: var(--sunk);
+  color: var(--ink);
+  font-weight: 600;
+}
+.settabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 18px;
+}
+.settabs button {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.settabs button.cur {
+  background: var(--sunk);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* modal */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 31, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+.modal {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 22px 24px;
+  width: min(480px, 92vw);
+  display: grid;
+  gap: 14px;
+}
+.modal .row {
+  display: grid;
+  gap: 4px;
+}
+.modal .row label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.modal .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* review drawer — opens over Convertir's file list from one row */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 31, 0.4);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 60;
+}
+.drawer {
+  background: var(--surface);
+  width: min(1100px, 96vw);
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px 24px;
+  box-shadow: var(--shadow);
+}
+@media (max-width: 1024px) {
+  .drawer {
+    width: 100%;
+  }
+}

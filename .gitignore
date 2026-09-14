@@ -1,15 +1,52 @@
-.ocr-mode
-.venv/
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.ruff_cache/
+*.pyc
+*.pyo
+.venv/
 *.egg-info/
+.eggs/
 dist/
 build/
-*_2markdown/
-*.md.bak
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+dist/
+.next/
+.turbo/
+out/
+
+# Docker
+postgres_data_*/
+core
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 .DS_Store
+
+# Alembic
+alembic/versions/*.pyc
+
+# 2markdown-specific
+*_2markdown/
+.ocr-mode
 /telemetry/
-.env
+*.md.bak
+
+# Desktop app (app/) build artefacts
+app/dist/
+app/node_modules/
+app/*.tsbuildinfo
+app/.env*.local

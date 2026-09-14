@@ -114,3 +114,41 @@ def build_frontmatter(
     lines.append("---")
     lines.append("")
     return "\n".join(lines)
+
+
+_CONVERTED_AT_RE = re.compile(r"^converted_at:.*$", re.MULTILINE)
+_CHAR_COUNT_RE = re.compile(r"^char_count:.*$", re.MULTILINE)
+
+
+def refresh_frontmatter_after_edit(content: str) -> str:
+    """Update `converted_at`/`char_count` after a page-level write rewrote the body.
+
+    A single-page retry or manual edit changes only that page's slice, not the
+    whole document, so rebuilding the entire frontmatter block (which would
+    also need the model/backend that did the *original* full conversion) is
+    the wrong move here — it would misrepresent the file's real provenance.
+    Just the two fields that describe the body itself must still track it,
+    though: leaving `char_count`/`converted_at` at their pre-edit values after
+    the body changed underneath them silently lies about what is on disk (see
+    B5). Frontmatter-less content (no leading `---`) is returned unchanged.
+    """
+    if not content.startswith("---\n"):
+        return content
+    end = content.find("\n---", 4)
+    if end == -1:
+        return content
+    end_of_block = content.find("\n", end + 1)
+    if end_of_block == -1:
+        return content
+    end_of_block += 1
+    frontmatter = content[:end_of_block]
+    body = content[end_of_block:]
+    frontmatter, n_ts = _CONVERTED_AT_RE.subn(
+        f'converted_at: "{datetime.now(UTC).isoformat()}"', frontmatter, count=1
+    )
+    frontmatter, n_cc = _CHAR_COUNT_RE.subn(
+        f"char_count: {len(body)}", frontmatter, count=1
+    )
+    if not n_ts and not n_cc:
+        return content
+    return frontmatter + body

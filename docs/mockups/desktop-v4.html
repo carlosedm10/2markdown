@@ -1,0 +1,1045 @@
+<title>2markdown Escritorio</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Caveat:wght@500&display=swap">
+<style>
+:root{
+  --ground:#F3F4F0; --surface:#FFFFFF; --sunk:#E9EBE5; --line:#D6D9D1; --line-soft:#E4E6E0;
+  --ink:#14181F; --ink-2:#3C4450; --muted:#6B7482;
+  --hl:#FFD84D; --hl-soft:#FFF1B8; --hl-ink:#7A5B00;
+  --ok:#2F9E6A; --ok-soft:#DDF3E8; --warn:#D9822B; --warn-soft:#FBE9D6; --bad:#C9463D; --bad-soft:#F8DEDC;
+  --paper:#FBFAF4; --rule:#CFD9E6; --pen:#22355B;
+  --shadow:0 1px 2px rgba(20,24,31,.06),0 12px 32px -12px rgba(20,24,31,.18);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#15181D; --surface:#1E2229; --sunk:#181B21; --line:#333944; --line-soft:#2A2F38;
+    --ink:#E8EAED; --ink-2:#C4C9D1; --muted:#98A1AD;
+    --hl:#FFD84D; --hl-soft:#3A3212; --hl-ink:#FFD84D;
+    --ok:#4CC08A; --ok-soft:#173226; --warn:#E89A4C; --warn-soft:#3A2A18; --bad:#E06A61; --bad-soft:#3B1F1D;
+    --paper:#F2EFE4; --rule:#C3CDD9; --pen:#22355B;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#15181D; --surface:#1E2229; --sunk:#181B21; --line:#333944; --line-soft:#2A2F38;
+  --ink:#E8EAED; --ink-2:#C4C9D1; --muted:#98A1AD;
+  --hl:#FFD84D; --hl-soft:#3A3212; --hl-ink:#FFD84D;
+  --ok:#4CC08A; --ok-soft:#173226; --warn:#E89A4C; --warn-soft:#3A2A18; --bad:#E06A61; --bad-soft:#3B1F1D;
+  --paper:#F2EFE4; --rule:#C3CDD9; --pen:#22355B;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:15px/1.55 "IBM Plex Sans",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:"Bricolage Grotesque","IBM Plex Sans",sans-serif;text-wrap:balance;margin:0;letter-spacing:-.01em}
+h1{font-size:clamp(34px,5vw,56px);font-weight:800;line-height:1.02;font-variation-settings:"opsz" 96}
+h2{font-size:28px;font-weight:600;line-height:1.15}
+h3{font-size:17px;font-weight:600}
+p{margin:0}
+a{color:inherit}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:.92em}
+.eyebrow{font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.wrap{max-width:1120px;margin:0 auto;padding:0 28px}
+.prose{max-width:66ch}
+.prose p+p{margin-top:12px}
+.hand{font-family:"Caveat",cursive;color:var(--hl-ink);font-size:1.25em;line-height:1.1}
+.mark{background:linear-gradient(transparent 55%,var(--hl) 55%,var(--hl) 92%,transparent 92%);padding:0 2px}
+
+header.top{padding:64px 0 36px;border-bottom:1px solid var(--line)}
+header.top .wrap{display:grid;grid-template-columns:1.2fr .8fr;gap:48px;align-items:end}
+header.top .lede{font-size:18px;color:var(--ink-2);margin-top:20px;max-width:56ch}
+.today{display:grid;gap:10px;font-size:14px}
+.today .row{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:8px 0;border-top:1px solid var(--line-soft)}
+.today .row:last-child{border-bottom:1px solid var(--line-soft)}
+.today .k{color:var(--muted)}
+.today .v code{background:var(--sunk);padding:1px 5px;border-radius:3px}
+.today .v.after{color:var(--ok);font-weight:500}
+
+section{padding:56px 0}
+section+section{border-top:1px solid var(--line)}
+.sec-head{display:grid;grid-template-columns:200px 1fr;gap:32px;margin-bottom:28px}
+@media (max-width:820px){.sec-head,header.top .wrap{grid-template-columns:1fr}}
+
+/* principles */
+.princ{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+.princ>div{background:var(--surface);padding:22px 22px 24px}
+.princ h3{margin-bottom:8px}
+.princ p{color:var(--ink-2);font-size:14px}
+.princ .from{margin-top:12px;font-size:12.5px;color:var(--muted)}
+.princ .from code{background:var(--sunk);padding:1px 5px;border-radius:3px}
+@media (max-width:820px){.princ{grid-template-columns:1fr}}
+
+/* tabs + mock window */
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:18px}
+.tabs button{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:inherit;font-size:14px;font-weight:500;padding:8px 14px;border-radius:999px;cursor:pointer;display:flex;gap:8px;align-items:center}
+.tabs button .n{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted)}
+.tabs button[aria-selected="true"]{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.tabs button[aria-selected="true"] .n{color:var(--hl)}
+.tabs button:focus-visible{outline:2px solid var(--hl);outline-offset:2px}
+.screen{display:grid;grid-template-columns:1fr 300px;gap:28px;align-items:start}
+@media (max-width:980px){.screen{grid-template-columns:1fr}}
+.notes{font-size:14px;color:var(--ink-2);display:grid;gap:14px;position:sticky;top:20px}
+.notes h3{font-size:15px}
+.notes ul{margin:0;padding-left:18px;display:grid;gap:6px}
+.notes .why{border-left:3px solid var(--hl);padding-left:12px;color:var(--ink-2)}
+.win{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;font-size:13.5px}
+.win .bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line-soft);background:var(--sunk)}
+.win .bar .dots{display:flex;gap:6px}
+.win .bar .dots i{width:11px;height:11px;border-radius:50%;background:var(--line);display:block}
+.win .bar .title{flex:1;text-align:center;font-size:12.5px;color:var(--muted);font-weight:500}
+.win .bar .step{font-size:12px;color:var(--muted);font-family:"IBM Plex Mono",monospace}
+.win .body{padding:26px 28px}
+.btn{display:inline-flex;align-items:center;gap:8px;border-radius:8px;padding:9px 16px;font-weight:600;font-size:13.5px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.btn.primary{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.btn.hl{background:var(--hl);color:#14181F;border-color:var(--hl)}
+.btn.ghost{border-color:transparent;color:var(--ink-2)}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.hlp{background:var(--hl-soft);color:var(--hl-ink)}
+.pill.mute{background:var(--sunk);color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;display:inline-block}
+
+/* screen 1: wizard */
+.wiz h2{font-size:24px;margin-bottom:6px}
+.wiz .sub{color:var(--muted);margin-bottom:22px}
+.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.choice{border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:10px;align-content:start;min-height:250px;position:relative}
+.choice.sel{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.choice .name{font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.choice .desc{color:var(--ink-2);font-size:13px}
+.choice .hw{background:var(--sunk);border-radius:8px;padding:10px 12px;font-size:12.5px;display:grid;gap:4px}
+.choice .hw .mono{font-size:12px}
+.choice .foot{margin-top:auto}
+.field{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;background:var(--surface);font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--muted)}
+.wiz .nav{display:flex;justify-content:space-between;align-items:center;margin-top:22px;color:var(--muted);font-size:13px}
+.wiz .nav .r{display:flex;gap:8px}
+@media (max-width:720px){.choices{grid-template-columns:1fr}}
+
+/* screen 2: convert */
+.conv{display:grid;grid-template-columns:1.25fr .85fr;gap:22px}
+@media (max-width:720px){.conv{grid-template-columns:1fr}}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:22px;display:grid;gap:12px;background:var(--sunk)}
+.drop .head{display:flex;justify-content:space-between;align-items:baseline}
+.drop .head b{font-size:15px}
+.drop .head span{color:var(--muted);font-size:12.5px}
+.files{display:grid;gap:6px}
+.files .f{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;background:var(--surface);border-radius:6px;padding:6px 10px;font-size:13px}
+.files .f .ico{width:18px;height:22px;border:1.5px solid var(--ink-2);border-radius:2px;position:relative;opacity:.7}
+.files .f .ico::after{content:"";position:absolute;right:-1px;top:-1px;width:6px;height:6px;background:var(--surface);border-left:1.5px solid var(--ink-2);border-bottom:1.5px solid var(--ink-2)}
+.files .f .meta{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.drop .more{color:var(--muted);font-size:12.5px;text-align:center;padding-top:4px}
+.presets{display:grid;gap:8px}
+.preset{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:18px 1fr;gap:10px;align-items:start}
+.preset .radio{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--line);margin-top:3px}
+.preset.sel{border-color:var(--ink)}
+.preset.sel .radio{border:5px solid var(--ink)}
+.preset b{display:block;font-size:14px}
+.preset span{color:var(--muted);font-size:12.5px}
+.summary{margin-top:14px;border-top:1px solid var(--line-soft);padding-top:12px;display:grid;gap:6px;font-size:13px}
+.summary .r{display:grid;grid-template-columns:86px 1fr;gap:8px}
+.summary .r .k{color:var(--muted)}
+.conv .cta{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line-soft);padding-top:18px;margin-top:4px}
+.conv .cta .adv{color:var(--muted);font-size:13px}
+
+/* screen 3: queue */
+.qhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.qhead .big{font-family:"Bricolage Grotesque",sans-serif;font-weight:600;font-size:22px}
+.qhead .eta{color:var(--muted);font-size:13px}
+.qbar{height:6px;background:var(--sunk);border-radius:3px;overflow:hidden;margin-bottom:18px}
+.qbar i{display:block;height:100%;width:38%;background:var(--ink)}
+.queue{display:grid;gap:2px}
+.q{display:grid;grid-template-columns:20px 1fr 190px 72px;gap:12px;align-items:center;padding:10px 12px;border-radius:8px;font-size:13.5px}
+.q:nth-child(odd){background:var(--sunk)}
+.q .st{width:14px;height:14px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700}
+.q .st.ok{background:var(--ok);color:#fff}
+.q .st.run{border:2px solid var(--ink);border-right-color:transparent;animation:spin 1s linear infinite}
+.q .st.wait{border:1.5px solid var(--line)}
+.q .st.warn{background:var(--warn);color:#fff}
+.q .st.bad{background:var(--bad);color:#fff}
+.q .name{display:grid}
+.q .name small{color:var(--muted);font-size:12px}
+.q .prog{display:grid;gap:4px}
+.q .prog .t{font-size:12px;color:var(--muted)}
+.q .prog .b{height:4px;background:var(--line-soft);border-radius:2px}
+.q .prog .b i{display:block;height:100%;background:var(--ink);border-radius:2px}
+.q .tm{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);font-family:"IBM Plex Mono",monospace;font-size:12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.q .st.run{animation:none}}
+.qfoot{display:flex;justify-content:space-between;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft);font-size:13px;color:var(--muted)}
+.qfoot details summary{cursor:pointer;list-style:none;font-family:"IBM Plex Mono",monospace;font-size:12px}
+.qfoot details summary::-webkit-details-marker{display:none}
+.qfoot pre{margin:8px 0 0;font-size:11.5px;color:var(--muted);white-space:pre-wrap}
+
+/* screen 4: review */
+.rev{display:grid;grid-template-columns:150px 1fr 1fr;gap:16px}
+@media (max-width:820px){.rev{grid-template-columns:1fr}}
+.pages{display:grid;gap:4px;align-content:start;font-size:12.5px}
+.pages .p{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:6px;color:var(--ink-2)}
+.pages .p.cur{background:var(--sunk);color:var(--ink);font-weight:600}
+.pages .file{font-weight:600;padding:4px 8px;color:var(--ink)}
+.pages .file+.file{margin-top:8px}
+.pane{border:1px solid var(--line);border-radius:10px;overflow:hidden;display:grid;grid-template-rows:auto 1fr}
+.pane .ph{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line-soft);font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.paper{background:var(--paper);background-image:repeating-linear-gradient(transparent 0 27px,var(--rule) 27px 28px);padding:26px 22px 22px 34px;min-height:300px;color:var(--pen);font-family:"Caveat",cursive;font-size:19px;line-height:28px;position:relative}
+.paper::before{content:"";position:absolute;left:24px;top:0;bottom:0;border-left:1.5px solid #E2A5A0}
+.paper .l{white-space:nowrap}
+.paper .l.hot{background:var(--hl-soft);border-radius:3px;margin:0 -4px;padding:0 4px}
+.md{padding:16px 18px;font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.75;color:var(--ink-2);min-height:300px}
+.md .h{color:var(--ink);font-weight:600}
+.md .fix{background:var(--hl-soft);color:var(--hl-ink);border-radius:3px;padding:0 3px;text-decoration:underline dotted}
+.rev-foot{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px;padding-top:14px;border-top:1px solid var(--line-soft)}
+.changes{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+.changes .c{background:var(--hl-soft);color:var(--hl-ink);border-radius:6px;padding:3px 8px;font-family:"IBM Plex Mono",monospace;font-size:12px}
+
+/* screen 5: settings */
+.set{display:grid;grid-template-columns:150px 1fr;gap:22px}
+@media (max-width:720px){.set{grid-template-columns:1fr}}
+.set nav{display:grid;gap:2px;align-content:start;font-size:13.5px}
+.set nav a{text-decoration:none;padding:7px 10px;border-radius:6px;color:var(--ink-2)}
+.set nav a.cur{background:var(--sunk);color:var(--ink);font-weight:600}
+.group{display:grid;gap:14px}
+.group h4{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-family:"IBM Plex Sans",sans-serif;font-weight:600}
+.model{display:grid;grid-template-columns:1fr auto auto;gap:14px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.model b{display:block;font-size:14px}
+.model span{color:var(--muted);font-size:12.5px}
+.model .sz{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ram{display:grid;gap:6px;font-size:12.5px;color:var(--muted)}
+.ram .bar{height:10px;border-radius:5px;background:var(--sunk);overflow:hidden;display:flex}
+.ram .bar i{display:block;height:100%}
+.krow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13.5px}
+.krow .k{display:grid;gap:2px}
+.krow .k span{color:var(--muted);font-size:12.5px}
+.toggle{width:36px;height:20px;border-radius:10px;background:var(--line);position:relative}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--surface)}
+.toggle.on{background:var(--ok)}
+.toggle.on::after{left:18px}
+
+
+/* mode switch + estimate */
+.mode{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:13px;font-weight:600}
+.mode span{padding:6px 12px;color:var(--muted)}
+.mode span.on{background:var(--ink);color:var(--ground)}
+.out{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;margin-top:10px}
+.out .path{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.out .k{color:var(--muted);font-size:12px;display:block}
+.est{margin-top:14px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.est .hd{display:flex;justify-content:space-between;align-items:baseline;padding:10px 12px;background:var(--sunk);font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+.est .big{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line-soft)}
+.est .big div{padding:12px}
+.est .big div+div{border-left:1px solid var(--line-soft)}
+.est .big .n{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:26px;line-height:1;font-variant-numeric:tabular-nums}
+.est .big .l{font-size:12px;color:var(--muted);margin-top:4px}
+.est .rows{display:grid;font-size:12.5px}
+.est .rows .r{display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:6px 12px;border-bottom:1px solid var(--line-soft);font-variant-numeric:tabular-nums}
+.est .rows .r:last-child{border-bottom:none}
+.est .rows .r .m{color:var(--muted);font-family:"IBM Plex Mono",monospace;font-size:11.5px}
+.est .alt{padding:8px 12px;font-size:12.5px;color:var(--muted);background:var(--sunk);border-top:1px solid var(--line-soft)}
+.est .alt b{color:var(--ink-2)}
+
+/* rendered markdown preview */
+.view-toggle{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:6px;overflow:hidden;font-size:11px;text-transform:none;letter-spacing:0;font-weight:600}
+.view-toggle span{padding:2px 8px;color:var(--muted)}
+.view-toggle span.on{background:var(--ink);color:var(--ground)}
+.rendered{padding:18px 20px;font-family:"IBM Plex Sans",sans-serif;font-size:13.5px;line-height:1.7;color:var(--ink-2);min-height:300px}
+.rendered h5{font-family:"Bricolage Grotesque",sans-serif;font-size:17px;font-weight:600;color:var(--ink);margin:0 0 10px}
+.rendered ul{margin:0;padding-left:18px;display:grid;gap:6px}
+.rendered .aside{color:var(--muted);font-style:italic;padding-left:18px;font-size:13px}
+.rendered .fix{background:var(--hl-soft);color:var(--hl-ink);border-radius:3px;padding:0 3px;text-decoration:underline dotted}
+.katex-display{margin:0}
+.katex{font-size:1.05em}
+.rendered .frac{display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle;font-size:.85em;line-height:1.1;margin:0 2px}
+.rendered .frac span:first-child{border-bottom:1px solid currentColor;padding:0 2px}
+.rendered .frac span{padding:0 2px}
+.rendered .mth{font-family:"IBM Plex Serif","Times New Roman",serif;font-style:italic;color:var(--ink)}
+.rendered .mth .up{font-style:normal}
+.rendered .mth .int{font-size:1.35em;font-style:normal;vertical-align:-.15em;margin-right:1px}
+.rendered .mth sup{font-size:.7em;line-height:0}
+
+/* pipeline */
+.pipe{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;align-items:stretch}
+@media (max-width:820px){.pipe{grid-template-columns:1fr}}
+.stage{border:1px solid var(--line);border-radius:10px;padding:12px;display:grid;gap:8px;align-content:start;position:relative;background:var(--surface)}
+.stage .no{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted)}
+.stage b{font-size:13.5px;line-height:1.25}
+.stage .what{font-size:12px;color:var(--muted)}
+.stage .sel{border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:6px;font-family:"IBM Plex Mono",monospace;background:var(--sunk)}
+.stage .sel.none{color:var(--muted);border-style:dashed;background:transparent;font-family:"IBM Plex Sans",sans-serif}
+.stage .sel .car{color:var(--muted)}
+.stage .tag{position:absolute;top:-9px;right:10px;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:1px 7px;border-radius:999px;background:var(--hl);color:#14181F}
+.stage.local{border-color:var(--hl)}
+.stage.cloud{border-color:var(--line)}
+.lanes{margin-top:18px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.lanes .hd{padding:10px 14px;background:var(--sunk);font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.05em;text-transform:uppercase;display:flex;justify-content:space-between}
+.lane{display:grid;grid-template-columns:150px 1fr 200px;gap:14px;align-items:center;padding:12px 14px;border-top:1px solid var(--line-soft);font-size:13px}
+@media (max-width:820px){.lane{grid-template-columns:1fr}}
+.lane .who{display:grid;gap:2px}
+.lane .who span{color:var(--muted);font-size:12px}
+.lane .sem{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.lane .sem i{width:14px;height:14px;border-radius:50%;display:block;border:1.5px solid var(--line)}
+.lane .sem i.busy{background:var(--hl);border-color:var(--hl)}
+.lane .sem i.free{background:var(--ok-soft);border-color:var(--ok)}
+.lane .sem small{color:var(--muted);margin-left:6px}
+.lane .fx{font-size:12.5px;color:var(--ink-2)}
+.lane.hot{background:var(--hl-soft)}
+.verdict{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;padding:12px 14px;border-top:1px solid var(--line-soft);background:var(--sunk);font-size:13px}
+.verdict .n{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:30px;line-height:1}
+.verdict .n small{font-family:"IBM Plex Sans",sans-serif;font-weight:500;font-size:12px;color:var(--muted);display:block}
+.verdict .tip{color:var(--ink-2)}
+.verdict .tip b{color:var(--ink)}
+
+/* equipo */
+.kit{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media (max-width:720px){.kit{grid-template-columns:1fr}}
+.kit .it{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start}
+.kit .it b{display:block;font-size:13.5px}
+.kit .it span{color:var(--muted);font-size:12.5px}
+.sync{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13px}
+.sync .paths{display:grid;gap:3px}
+.sync .paths .p{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-2)}
+.sync .paths .p b{font-family:"IBM Plex Sans",sans-serif;color:var(--muted);font-weight:500;display:inline-block;width:52px}
+.sync .paths small{color:var(--muted)}
+
+
+/* simulator */
+.simtop{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+@media (max-width:720px){.simtop{grid-template-columns:1fr}}
+.simtop .mode span{cursor:pointer}
+.loadinfo{font-size:12px;color:var(--muted);margin-top:6px;font-variant-numeric:tabular-nums}
+.slider{display:flex;gap:10px;align-items:center;margin-top:8px}
+.slider input{flex:1;accent-color:var(--ink)}
+.slider .mono{font-size:13px;min-width:1.5em;text-align:right}
+select.pick{appearance:none;-webkit-appearance:none;width:100%;border:1px solid var(--line);border-radius:7px;padding:6px 26px 6px 8px;font:12px "IBM Plex Mono",monospace;color:var(--ink);background:var(--sunk) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236B7482'/%3E%3C/svg%3E") no-repeat right 8px center;cursor:pointer}
+select.pick:focus-visible{outline:2px solid var(--hl);outline-offset:1px}
+.stage .tag:empty{display:none}
+.stage.on-gpu{border-color:var(--hl)}
+.stage.on-cloud{border-color:var(--ink-2)}
+.stage.on-cloud .tag{background:var(--ink);color:var(--ground)}
+.stage.on-cpu .tag{background:var(--sunk);color:var(--muted)}
+.stage.bad{border-color:var(--bad);box-shadow:0 0 0 1px var(--bad)}
+.block{margin-top:14px;border:1px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:12px 14px;font-size:13px;display:grid;gap:4px}
+.block b{color:var(--bad)}
+.block span{color:var(--ink-2)}
+.gantt{display:grid;gap:6px}
+.gantt .g{height:14px;background:var(--sunk);border-radius:4px;overflow:hidden;position:relative}
+.gantt .g i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;transition:width .35s ease}
+.lane.hot .gantt .g i{background:var(--hl)}
+.lane .gantt .g i{background:var(--line)}
+.lane.idle{opacity:.55}
+.verdict{grid-template-columns:auto auto auto 1fr}
+@media (max-width:820px){.verdict{grid-template-columns:1fr 1fr}}
+.verdict .n{min-width:90px}
+.verdict .n small{margin-top:4px}
+.verdict .tip a{color:var(--ink);font-weight:600;text-decoration:underline dotted;cursor:pointer}
+
+
+/* live semaphores in queue */
+.live{display:grid;gap:4px;margin:-8px 0 16px}
+.lv{display:grid;grid-template-columns:78px 84px 1fr auto;gap:12px;align-items:center;padding:6px 10px;border-radius:6px;font-size:12.5px;border:1px solid var(--line-soft)}
+.lv.hot{background:var(--hl-soft);border-color:var(--hl)}
+.lv.idle{opacity:.55}
+.lv .who{font-weight:600}
+.lv .sem{display:flex;gap:4px}
+.lv .sem i{width:12px;height:12px;border-radius:50%;display:block;border:1.5px solid var(--line)}
+.lv .sem i.busy{background:var(--hl);border-color:var(--hl)}
+.lv .sem i.free{background:var(--ok-soft);border-color:var(--ok)}
+.lv .what{color:var(--ink-2)}
+.lv .wait{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+@media (max-width:720px){.lv{grid-template-columns:1fr 1fr}}
+
+
+.block.warnblock{border-color:var(--warn);background:var(--warn-soft);color:var(--warn)}
+.block.warnblock b{color:var(--warn)}
+.addprice{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:6px}
+.addprice label{display:grid;gap:3px;font-size:11.5px;color:var(--muted)}
+.addprice input{width:120px;border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:12px "IBM Plex Mono",monospace;background:var(--surface);color:var(--ink)}
+.tok{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-top:16px}
+@media (max-width:820px){.tok{grid-template-columns:1fr}}
+.tok>div{background:var(--surface);padding:16px 18px;display:grid;gap:8px;align-content:start}
+.tok h4{font-family:"IBM Plex Sans",sans-serif;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.tok .pg{display:flex;gap:12px;align-items:flex-start}
+.tok .thumb{width:54px;height:72px;flex:none;border:1.5px solid var(--line);border-radius:3px;background:var(--paper);position:relative;overflow:hidden}
+.tok .thumb.lines{background-image:repeating-linear-gradient(transparent 0 5px,var(--rule) 5px 6px);background-position:0 8px}
+.tok .thumb.fig::after{content:"";position:absolute;left:8px;right:8px;top:14px;bottom:20px;border:1.5px dashed var(--pen);border-radius:2px}
+.tok .thumb.text{background-image:repeating-linear-gradient(transparent 0 4px,#B8BFC9 4px 5px);background-position:0 8px;background-size:70% 100%;background-repeat:repeat-y}
+.tok .f{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-2);line-height:1.6}
+.tok .f b{color:var(--ink)}
+.tok p{font-size:13px;color:var(--ink-2)}
+
+/* mapping table */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;background:var(--sunk)}
+tr:last-child td{border-bottom:none}
+td code{background:var(--sunk);padding:1px 5px;border-radius:3px;white-space:nowrap}
+td .stack{display:flex;flex-wrap:wrap;gap:4px}
+
+/* research */
+.pat{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+@media (max-width:820px){.pat{grid-template-columns:1fr}}
+.pat article{display:grid;gap:6px;padding:18px 0;border-top:1px solid var(--line)}
+.pat article .src{font-size:12.5px;color:var(--muted)}
+.pat article .src a{color:var(--muted)}
+.pat article p{color:var(--ink-2);font-size:14px}
+.pat article .take{font-weight:500;color:var(--ink)}
+
+/* architecture */
+.arch{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:start}
+@media (max-width:820px){.arch{grid-template-columns:1fr}}
+.stack-diagram{display:grid;gap:8px}
+.layer{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:var(--surface);display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}
+.layer b{display:block;font-size:14px}
+.layer span{color:var(--muted);font-size:12.5px}
+.layer .tag{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--muted)}
+.layer.keep{border-color:var(--ok);background:var(--ok-soft)}
+.layer.keep .tag{color:var(--ok)}
+.layer.new{border-style:dashed}
+.arrow{text-align:center;color:var(--muted);font-size:12px;line-height:1}
+
+/* open questions */
+.qs{display:grid;gap:0;counter-reset:q}
+.qs>div{display:grid;grid-template-columns:44px 1fr;gap:14px;padding:16px 0;border-top:1px solid var(--line)}
+.qs>div::before{counter-increment:q;content:counter(q,upper-alpha);font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:22px;color:var(--hl-ink);line-height:1}
+.qs b{display:block;margin-bottom:4px}
+.qs p{color:var(--ink-2);font-size:14px}
+footer{padding:36px 0 56px;color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div>
+      <div class="eyebrow">Boceto v4 · tras tres rondas</div>
+      <h1 style="margin-top:10px">Del <code style="font-size:.7em;background:var(--sunk);padding:2px 10px;border-radius:6px;vertical-align:middle">make process</code> a una app que <span class="mark">abres y sueltas la carpeta</span>.</h1>
+      <p class="lede">Hoy 2markdown exige Docker, un Makefile, Ollama a mano y 17 flags. La propuesta es una app de escritorio para Mac con tres decisiones visibles, un pipeline de IA que se ve y se toca por etapas, y tiempo y coste dichos antes de convertir nada.</p>
+    </div>
+    <div class="today">
+      <div class="eyebrow">Lo que cuesta hoy → después</div>
+      <div class="row"><span class="k">Instalar</span><span class="v">Docker Desktop, <code>make fresh-setup</code>, <code>make build ollama</code>, Ollama en el host</span></div>
+      <div class="row"><span class="k"></span><span class="v after">Arrastrar la app a Aplicaciones</span></div>
+      <div class="row"><span class="k">Convertir</span><span class="v"><code>make process INPUT="…" OCR_BACKEND=ollama REVIEW_MODEL=…</code></span></div>
+      <div class="row"><span class="k"></span><span class="v after">Soltar la carpeta, elegir un preajuste, Convertir</span></div>
+      <div class="row"><span class="k">Comprobar</span><span class="v">Abrir <code>2markdown-report.html</code> y el manifest JSON</span></div>
+      <div class="row"><span class="k"></span><span class="v after">Cola con estado por archivo y revisión página a página</span></div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Principios</div>
+      <div class="prose"><h2>Seis decisiones que fijan el resto</h2><p style="color:var(--ink-2);margin-top:8px">Cada una sale de un patrón que ya funciona en otra app o de algo que el motor ya sabe hacer y hoy sólo se ve en logs.</p></div>
+    </div>
+    <div class="princ">
+      <div><h3>Instalar es abrir</h3><p>Un único instalador con Tesseract dentro. Docker deja de existir para el usuario; queda sólo para desarrollo. Ollama se instala desde la app cuando alguien elige IA local.</p><div class="from">Patrón: LM Studio, Msty</div></div>
+      <div><h3>Tres decisiones, no diecisiete flags</h3><p>Qué convertir, con qué preajuste, dónde dejarlo. Los flags siguen existiendo detrás de «Ajustes avanzados», pero nadie los necesita para el caso normal.</p><div class="from">Patrón: presets de HandBrake · Reutiliza <code>cli.py</code></div></div>
+      <div><h3>La máquina decide lo que cabe</h3><p>La app lee RAM y GPU y recomienda un modelo con su tamaño y su coste por página antes de descargar nada. Un solo modelo local residente, siempre.</p><div class="from">Patrón: estimación de VRAM en LM Studio · Reutiliza <code>effective_figure_model</code>, <code>effective_workers</code></div></div>
+      <div><h3>Nada falla en silencio</h3><p>Lo que hoy va al manifest — ok, fallo, página caída a motor rápido — se ve en la cola con un color y una frase. Cada fallo tiene un botón para reintentar con un motor mejor.</p><div class="from">Reutiliza <code>manifest.py</code>, <code>ocr_fallback_pages</code></div></div>
+      <div><h3>Revisar al lado del original</h3><p>Página escaneada a la izquierda, Markdown a la derecha. Los cambios del revisor ciego aparecen subrayados: ves qué tocó y puedes deshacerlo.</p><div class="from">Patrón: ocrAI Reader+Editor · Reutiliza <code>describe_changes</code></div></div>
+      <div><h3>El tiempo se dice antes</h3><p>Antes de pulsar Convertir se muestra una estimación honesta: 25 páginas manuscritas con IA local son ~1 h, no «un momento». El planner ya calcula esto.</p><div class="from">Patrón: cola con ETA de HandBrake · Reutiliza <code>planner.py</code></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Pantallas</div>
+      <div class="prose"><h2>Seis pantallas, un recorrido</h2><p style="color:var(--ink-2);margin-top:8px">Los valores en las maquetas son de ejemplo (la carpeta <code>Apuntes/</code> de las pruebas). Las notas al margen dicen qué decide cada pantalla y por qué.</p></div>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="s1"><span class="n">1</span>Primera vez</button>
+      <button role="tab" aria-selected="false" data-tab="s2"><span class="n">2</span>Convertir</button>
+      <button role="tab" aria-selected="false" data-tab="s3"><span class="n">3</span>En marcha</button>
+      <button role="tab" aria-selected="false" data-tab="s4"><span class="n">4</span>Revisar</button>
+      <button role="tab" aria-selected="false" data-tab="s5"><span class="n">5</span>Pipeline</button>
+      <button role="tab" aria-selected="false" data-tab="s6"><span class="n">6</span>Equipo y sincronización</button>
+    </div>
+
+    <!-- 1 · Primera vez -->
+    <div class="screen" id="s1" role="tabpanel">
+      <div class="win">
+        <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="title">2markdown</div><div class="step">paso 2 de 3</div></div>
+        <div class="body wiz">
+          <h2>¿Cómo quieres leer los documentos escaneados y a mano?</h2>
+          <p class="sub">Los documentos con texto (Word, PDF normal, Excel) se convierten igual de bien con cualquiera. Esto sólo cambia las imágenes y los escaneos.</p>
+          <div class="choices">
+            <div class="choice">
+              <div class="name">Rápido, sin conexión <span class="pill ok"><span class="dot"></span>Listo</span></div>
+              <p class="desc">Ya viene incluido. Bien para texto impreso; flojo con letra a mano y fórmulas.</p>
+              <div class="hw"><span>Coste: gratis · Velocidad: segundos por página</span><span class="mono">Motor: Tesseract · eng+spa</span></div>
+              <div class="foot"><span class="btn ghost">Usar éste</span></div>
+            </div>
+            <div class="choice sel">
+              <div class="name">Con IA en este Mac <span class="pill hlp">Recomendado</span></div>
+              <p class="desc">Lee letra a mano y fórmulas. Todo se queda en tu ordenador.</p>
+              <div class="hw">
+                <span>Detectado: <b>Apple M3 Max · 48 GB</b></span>
+                <span class="mono">qwen2.5vl:7b · 5,6 GB · ~40 s/página ✓</span>
+                <span class="mono" style="opacity:.6">qwen2.5vl:32b · 20 GB · ~2,5 min/página</span>
+              </div>
+              <div class="foot"><span class="btn primary">Descargar 5,6 GB</span></div>
+              <p class="desc" style="font-size:12px;color:var(--muted)">Instala Ollama por ti si no lo tienes.</p>
+            </div>
+            <div class="choice">
+              <div class="name">Con IA en la nube</div>
+              <p class="desc">La mejor calidad con letra a mano. Unos céntimos por página; las páginas salen de tu ordenador.</p>
+              <div class="field"><span>sk-••••••••••••••••</span><span style="color:var(--ok);font-family:'IBM Plex Sans';font-weight:600">Comprobar</span></div>
+              <div class="hw"><span class="mono">openai:gpt-4o · ~1 ¢/página</span></div>
+              <div class="foot"><span class="btn ghost">Usar éste</span></div>
+            </div>
+          </div>
+          <div class="nav"><span>Puedes cambiarlo después en Ajustes.</span><div class="r"><span class="btn ghost">Atrás</span><span class="btn primary">Continuar</span></div></div>
+        </div>
+      </div>
+      <aside class="notes">
+        <h3>Qué decide esta pantalla</h3>
+        <ul>
+          <li>La única pregunta técnica de toda la app, hecha en términos de resultado (letra a mano sí/no, sale de tu ordenador sí/no), no de motor.</li>
+          <li>La detección de hardware convierte «¿7b o 32b?» en una recomendación con dos números: GB y segundos por página. Los segundos salen de <code>LOCAL_SECONDS_PER_VLM_PAGE</code> ajustados por modelo.</li>
+          <li>La opción rápida está marcada <i>Listo</i>: Tesseract va dentro del instalador, no se descarga.</li>
+        </ul>
+        <div class="why">La clave de API se pega en un campo enmascarado con botón <i>Comprobar</i>. Cuando la cuenta se quede sin saldo, la app lo dice aquí en vez de reintentar tres veces por página.</div>
+        <p class="hand">→ ¿paso 1 = elegir carpeta de salida por defecto? ¿o quitarlo?</p>
+      </aside>
+    </div>
+
+    <!-- 2 · Convertir -->
+    <div class="screen" id="s2" role="tabpanel" hidden>
+      <div class="win">
+        <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="title">2markdown</div><div class="step">qwen2.5vl:7b · gpt-4o-mini</div></div>
+        <div class="body conv">
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <div class="mode"><span class="on">Una vez</span><span>Mantener sincronizada</span></div>
+              <span style="font-size:12px;color:var(--muted)">Sincronizar vigila la carpeta y convierte lo nuevo</span>
+            </div>
+            <div class="drop">
+              <div class="head"><b>Apuntes</b><span>8 archivos · 25 páginas · 22 escaneadas · 41 MB</span></div>
+              <div class="files">
+                <div class="f"><i class="ico"></i><span>Tema 1.pdf</span><span class="meta">3 pág · escaneado</span></div>
+                <div class="f"><i class="ico"></i><span>Tema 2.pdf</span><span class="meta">4 pág · escaneado</span></div>
+                <div class="f"><i class="ico"></i><span>Tema 3.pdf</span><span class="meta">2 pág · escaneado</span></div>
+                <div class="f"><i class="ico"></i><span>Tema 4.pdf</span><span class="meta">3 pág · escaneado</span></div>
+                <div class="f"><i class="ico"></i><span>Bibliografía.docx</span><span class="meta">texto · sin OCR</span></div>
+              </div>
+              <div class="more">y 3 más · suelta más archivos o carpetas aquí</div>
+            </div>
+            <div class="out"><div><span class="k">Salida</span><span class="path">~/Documentos/Apuntes_2markdown</span></div><span class="btn ghost" style="padding:5px 10px">Cambiar…</span></div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><span class="eyebrow">Preajuste</span><span style="font-size:12px;color:var(--muted)">Editar ▸</span></div>
+            <div class="presets">
+              <div class="preset"><i class="radio"></i><div><b>Rápido</b><span>Texto impreso. Sin IA, segundos por archivo.</span></div></div>
+              <div class="preset sel"><i class="radio"></i><div><b>Apuntes a mano</b><span>IA local para leer, nube para las erratas.</span></div></div>
+              <div class="preset"><i class="radio"></i><div><b>Archivo grande</b><span>Miles de archivos. Sólo motor rápido, 4 a la vez.</span></div></div>
+              <div class="preset" style="border-style:dashed"><i class="radio" style="border-style:dashed"></i><div><b style="color:var(--muted)">Nuevo preajuste…</b><span>Parte de uno existente y cámbiale los modelos</span></div></div>
+            </div>
+            <div class="est">
+              <div class="hd"><span>Antes de convertir</span><span>estimación</span></div>
+              <div class="big">
+                <div><div class="n">~19 min</div><div class="l">1 archivo a la vez · GPU compartida</div></div>
+                <div><div class="n">$0.03</div><div class="l">sólo la revisión va a la nube</div></div>
+              </div>
+              <div class="rows">
+                <div class="r"><span>Leer 22 páginas escaneadas</span><span class="m">qwen2.5vl:7b · local</span><span>~15 min · $0</span></div>
+                <div class="r"><span>Describir ~6 figuras</span><span class="m">qwen2.5vl:7b · local</span><span>~2 min · $0</span></div>
+                <div class="r"><span>Revisar erratas, 25 páginas</span><span class="m">gpt-4o-mini · nube</span><span>~1 min · $0.03</span></div>
+                <div class="r"><span>Extraer texto, tablas, limpiar</span><span class="m">sin modelo</span><span>&lt;1 min · $0</span></div>
+              </div>
+              <div class="alt">Si lees también en la nube (gpt-4o): <b>~4 min · $0.28</b></div>
+              <div class="alt" style="border-top:1px solid var(--line-soft)">Precios en USD de <code>genai-prices</code> · actualizados hace 2 h · tokens por página: <a href="#tokens" style="color:inherit">estimados por píxeles y texto</a></div>
+            </div>
+          </div>
+          <div class="cta"><span class="adv">Ajustes avanzados ▾ &nbsp;·&nbsp; Sólo listar sin convertir</span><span class="btn hl">Convertir 8 archivos →</span></div>
+        </div>
+      </div>
+      <aside class="notes">
+        <h3>Qué decide esta pantalla</h3>
+        <ul>
+          <li><b>Una vez / Mantener sincronizada</b> es la primera decisión, arriba. La misma pantalla sirve para las dos: en «sincronizada» el botón pasa a ser «Empezar a vigilar» y la pareja entrada→salida se guarda en Equipo y sincronización.</li>
+          <li>La carpeta de salida es visible y cambiable siempre, no un default escondido. Por defecto, la hermana <code>_2markdown</code> de hoy.</li>
+          <li>Tres preajustes, todos editables («Editar ▸» abre el Pipeline con ese preajuste cargado). El cuarto hueco crea uno nuevo a partir de otro.</li>
+          <li>La estimación se desglosa por etapa con el modelo que la hace: tiempo local sale del planner (<code>LOCAL_SECONDS_PER_VLM_PAGE</code>, <code>LOCAL_SECONDS_PER_FIGURE</code> ajustados al modelo) y el coste de nube de tokens medios por página × precio del modelo.</li>
+          <li>La línea «Si lees también en la nube…» enseña la alternativa relevante sin obligar a cambiar nada.</li>
+          <li>Los precios no los mantiene la app: vienen de <code>genai-prices</code>, la librería de Pydantic que ya trae pydantic-ai como dependencia. Se actualiza sola cada hora y la fecha se muestra. Los tokens por página salen de la telemetría de tus conversiones anteriores; sin historial, de una media por tipo de página.</li>
+        </ul>
+        <div class="why">Los <code>.chunks.json</code> ya no son un preajuste: siguen disponibles en Ajustes avanzados como casilla, pero la app convierte a Markdown y nada más.</div>
+      </aside>
+    </div>
+
+    <!-- 3 · En marcha -->
+    <div class="screen" id="s3" role="tabpanel" hidden>
+      <div class="win">
+        <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="title">2markdown · Apuntes</div><div class="step">convirtiendo</div></div>
+        <div class="body">
+          <div class="qhead"><div class="big">3 de 8 archivos</div><div class="eta">quedan ~21 min · empezó 17:42</div></div>
+          <div class="qbar"><i></i></div>
+          <div class="live">
+            <div class="lv hot"><span class="who">GPU</span><span class="sem"><i class="busy"></i></span><span class="what">Tema 4.pdf · pág. 2 · leyendo</span><span class="wait">3 archivos esperan</span></div>
+            <div class="lv"><span class="who">Nube</span><span class="sem"><i class="busy"></i><i class="free"></i><i class="free"></i><i class="free"></i></span><span class="what">Tema 2.pdf · revisando pág. 4</span><span class="wait">$0.02 hasta ahora</span></div>
+            <div class="lv idle"><span class="who">Sin modelo</span><span class="sem"><i class="free"></i></span><span class="what">Bibliografía.docx · en cola</span><span class="wait"></span></div>
+          </div>
+          <div class="queue">
+            <div class="q"><span class="st ok">✓</span><div class="name">Tema 1.pdf<small>3 páginas · 1 corrección del revisor</small></div><div class="prog"><span class="t">Listo</span></div><span class="tm">6:12</span></div>
+            <div class="q"><span class="st ok">✓</span><div class="name">Tema 2.pdf<small>4 páginas</small></div><div class="prog"><span class="t">Listo</span></div><span class="tm">8:40</span></div>
+            <div class="q"><span class="st warn">!</span><div class="name">Tema 3.pdf<small>2 páginas · <b>1 página leída con el motor rápido</b> — la IA no respondió</small></div><div class="prog"><span class="pill warn">Reintentar página con IA</span></div><span class="tm">3:05</span></div>
+            <div class="q"><span class="st run"></span><div class="name">Tema 4.pdf<small>leyendo página 2 de 3 · reglas de integración</small></div><div class="prog"><span class="t">Leyendo con IA…</span><div class="b"><i style="width:55%"></i></div></div><span class="tm">2:31</span></div>
+            <div class="q"><span class="st wait"></span><div class="name">Bibliografía.docx<small>texto · sin OCR</small></div><div class="prog"><span class="t">En cola</span></div><span class="tm">~0:05</span></div>
+            <div class="q"><span class="st wait"></span><div class="name">Tema 5.pdf<small>5 páginas</small></div><div class="prog"><span class="t">En cola</span></div><span class="tm">~11:00</span></div>
+            <div class="q"><span class="st wait"></span><div class="name">Tema 6.pdf<small>3 páginas</small></div><div class="prog"><span class="t">En cola</span></div><span class="tm">~6:30</span></div>
+            <div class="q"><span class="st wait"></span><div class="name">Tema 7.pdf<small>3 páginas</small></div><div class="prog"><span class="t">En cola</span></div><span class="tm">~6:30</span></div>
+          </div>
+          <div class="qfoot">
+            <details><summary>▸ Detalles técnicos</summary><pre>17:44:12 Tema 3.pdf p.2  ollama:qwen2.5vl:7b  Invalid response (role '') → reload model → fallback tesseract
+17:47:03 Tema 4.pdf p.1  ollama:qwen2.5vl:7b  ok 41.2s · review gpt-4o-mini 0 changes</pre></details>
+            <div style="display:flex;gap:8px"><span class="btn ghost">Pausar</span><span class="btn">Abrir carpeta de salida</span></div>
+          </div>
+        </div>
+      </div>
+      <aside class="notes">
+        <h3>Qué decide esta pantalla</h3>
+        <ul>
+          <li>Tres estados con forma y color: hecho, aviso, fallo. El aviso es exactamente lo que hoy sólo aparece en <code>ocr_fallback_pages</code> del manifest: una página se leyó peor de lo pedido.</li>
+          <li>Cada aviso trae su remedio al lado — «Reintentar página con IA» — en vez de exigir que el usuario entienda por qué pasó.</li>
+          <li>Los tiempos de los archivos en cola son la estimación del planner por página; los hechos son reales. Misma columna, tipografía tabular.</li>
+          <li>El log de siempre sigue ahí, plegado. Quien quiera enviarte un error lo copia de ahí.</li>
+          <li><b>Semáforos en vivo</b> bajo la barra: los mismos tres carriles del Pipeline, pero con lo que está pasando ahora — qué archivo y página tiene el permiso de la GPU, cuántos esperan detrás, cuántos permisos de nube hay en uso y lo gastado hasta el momento. Es la telemetría que hoy va a <code>telemetry/</code>, en tres líneas.</li>
+        </ul>
+        <div class="why">La cola puede seguir aceptando archivos mientras convierte (patrón HandBrake). Con un modelo local no se paralelizan más, pero sí se encolan — y el carril GPU en ámbar te dice por qué.</div>
+      </aside>
+    </div>
+
+    <!-- 4 · Revisar -->
+    <div class="screen" id="s4" role="tabpanel" hidden>
+      <div class="win">
+        <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="title">Tema 4.pdf · página 2 de 3</div><div class="step">revisar</div></div>
+        <div class="body rev">
+          <div class="pages">
+            <div class="file">Tema 3.pdf</div>
+            <div class="p"><span>pág. 1</span><span class="dot" style="color:var(--ok)"></span></div>
+            <div class="p"><span>pág. 2</span><span class="dot" style="color:var(--warn)"></span></div>
+            <div class="file">Tema 4.pdf</div>
+            <div class="p"><span>pág. 1</span><span class="dot" style="color:var(--ok)"></span></div>
+            <div class="p cur"><span>pág. 2</span><span class="dot" style="color:var(--hl-ink)"></span></div>
+            <div class="p"><span>pág. 3</span><span class="dot" style="color:var(--ok)"></span></div>
+          </div>
+          <div class="pane">
+            <div class="ph"><span>Original</span><span>300 dpi</span></div>
+            <div class="paper">
+              <div class="l">Tema 4 – Reglas de integración</div>
+              <div class="l">∫ c·f(x) dx = c·∫ f(x) dx</div>
+              <div class="l hot">∫ f'(x)/f(x) dx = ln|f(x)| + C</div>
+              <div class="l">∫ aᶠ⁽ˣ⁾·f'(x) dx = aᶠ⁽ˣ⁾/ln a + C</div>
+              <div class="l">/d es la razón/</div>
+              <div class="l">∫ –f'/(1+f²) dx = arccot f + C</div>
+            </div>
+          </div>
+          <div class="pane">
+            <div class="ph"><span>Markdown</span><span class="view-toggle"><span class="on">Vista</span><span>Código</span><span>Editar</span></span></div>
+            <div class="rendered">
+              <h5>Tema 4 – Reglas de integración</h5>
+              <ul>
+                <li><span class="mth"><span class="int">∫</span> c·f(x) dx = c·<span class="int">∫</span> f(x) dx</span></li>
+                <li><span class="mth"><span class="int">∫</span> <span class="frac"><span class="fix">f′(x)</span><span>f(x)</span></span> dx = <span class="up">ln</span>|f(x)| + C</span></li>
+                <li><span class="mth"><span class="int">∫</span> a<sup>f(x)</sup>·f′(x) dx = <span class="frac"><span>a<sup>f(x)</sup></span><span><span class="up">ln</span> a</span></span> + C</span></li>
+                <li class="aside" style="list-style:none">/d es la razón/</li>
+                <li><span class="mth"><span class="int">∫</span> <span class="frac"><span>−f′</span><span>1 + f<sup>2</sup></span></span> dx = <span class="up fix">arccot</span>(f) + C</span></li>
+              </ul>
+            </div>
+          </div>
+          <div class="rev-foot">
+            <div class="changes"><span>Revisor:</span><span class="c">l.3 &nbsp;f(x) → f'(x)</span><span class="c">l.6 &nbsp;\arccot → \operatorname{arccot}</span><span style="color:var(--muted)">deshacer</span></div>
+            <div style="display:flex;gap:8px"><span class="btn ghost">Volver a leer con la nube</span><span class="btn">Abrir en Obsidian</span><span class="btn primary">Guardar</span></div>
+          </div>
+        </div>
+      </div>
+      <aside class="notes">
+        <h3>Qué decide esta pantalla</h3>
+        <ul>
+          <li><b>Vista / Código / Editar</b> sobre el mismo panel. «Vista» renderiza el Markdown como lo verás en Obsidian: encabezados, listas y fórmulas con KaTeX, no <code>#</code> ni <code>$…$</code> en crudo. Un <code>\arccot</code> que KaTeX no conoce se ve en rojo aquí, igual que allí — antes de abrirlo fuera.</li>
+          <li>«Editar» es un editor de texto sobre el <code>.md</code> con la vista actualizándose al lado. Suficiente para arreglar una <i>f</i> por una <i>g</i>; no es un procesador de textos.</li>
+          <li>Los cambios del revisor ciego se subrayan en las tres vistas y se listan abajo desde <code>describe_changes()</code>: el diff real, no lo que el modelo dice.</li>
+          <li>Ámbar en la lista de páginas = leída con motor rápido; ahí «Volver a leer con la nube» es el remedio.</li>
+        </ul>
+        <div class="why">Obsidian sigue ahí como destino final. Lo que se añade es poder <i>ver</i> el resultado bonito y corregir lo pequeño sin salir, que es donde se decide si te fías de la conversión.</div>
+      </aside>
+    </div>
+
+    <!-- 5 · Pipeline -->
+    <div class="screen" id="s5" role="tabpanel" hidden>
+      <div class="win" id="sim">
+        <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="title">Pipeline · preajuste «Apuntes a mano»</div><div class="step">simulador · pruébalo</div></div>
+        <div class="body">
+          <div class="simtop">
+            <div>
+              <span class="eyebrow">Carga de prueba</span>
+              <div class="mode" style="margin-top:6px"><span class="on" data-load="apuntes">Apuntes · 8 archivos</span><span data-load="archivo">Archivo · 3 000 archivos</span></div>
+              <div class="loadinfo" id="loadinfo"></div>
+            </div>
+            <div>
+              <span class="eyebrow">Archivos a la vez (workers)</span>
+              <div class="slider"><input type="range" id="workers" min="1" max="8" value="4" aria-label="workers"><span class="mono" id="workersv">4</span></div>
+              <div class="loadinfo" id="workersnote"></div>
+            </div>
+          </div>
+
+          <div class="pipe">
+            <div class="stage"><span class="no">1</span><b>Detectar y extraer texto</b><span class="what">Word, Excel, PDF con texto, tablas</span><div class="sel none">sin modelo</div></div>
+            <div class="stage" data-stage="ocr"><span class="tag"></span><span class="no">2</span><b>Leer páginas escaneadas</b><span class="what">OCR, letra a mano, fórmulas</span>
+              <select class="pick" data-for="ocr" aria-label="modelo OCR">
+                <option value="tess">Tesseract · CPU</option>
+                <option value="q7" selected>qwen2.5vl:7b · local</option>
+                <option value="q32">qwen2.5vl:32b · local</option>
+                <option value="g4o">gpt-4o · nube</option>
+              </select></div>
+            <div class="stage" data-stage="fig"><span class="tag"></span><span class="no">3</span><b>Describir figuras</b><span class="what">Diagramas → texto alternativo</span>
+              <select class="pick" data-for="fig" aria-label="modelo figuras">
+                <option value="off">No describir</option>
+                <option value="q7" selected>qwen2.5vl:7b · local</option>
+                <option value="q32">qwen2.5vl:32b · local</option>
+                <option value="g4m">gpt-4o-mini · nube</option>
+                <option value="g4o">gpt-4o · nube</option>
+              </select></div>
+            <div class="stage" data-stage="rev"><span class="tag"></span><span class="no">4</span><b>Revisar erratas</b><span class="what">Sólo texto; corrige caracteres</span>
+              <select class="pick" data-for="rev" aria-label="modelo revisor">
+                <option value="off">Sin revisión</option>
+                <option value="g4m" selected>gpt-4o-mini · nube</option>
+                <option value="g4o">gpt-4o · nube</option>
+                <option value="q7">qwen2.5vl:7b · local</option>
+                <option value="unk">modelo recién salido · nube · sin precio</option>
+              </select></div>
+            <div class="stage"><span class="no">5</span><b>Limpiar y escribir</b><span class="what">Guiones, comillas, encabezados, <code>.md</code></span><div class="sel none">sin modelo</div></div>
+          </div>
+
+          <div class="block" id="blocker" hidden></div>
+
+          <div class="lanes">
+            <div class="hd"><span>Dónde se espera</span><span>barras a la misma escala · la más larga manda</span></div>
+            <div class="lane" id="lane-gpu">
+              <div class="who">GPU de este Mac<span id="gpu-sub">Ollama · 36 GB máx.</span></div>
+              <div class="gantt"><div class="g" id="g-gpu"></div><div class="sem" id="sem-gpu"></div></div>
+              <div class="fx" id="fx-gpu"></div>
+            </div>
+            <div class="lane" id="lane-cloud">
+              <div class="who">Nube<span id="cloud-sub">OpenAI</span></div>
+              <div class="gantt"><div class="g" id="g-cloud"></div><div class="sem" id="sem-cloud"></div></div>
+              <div class="fx" id="fx-cloud"></div>
+            </div>
+            <div class="lane" id="lane-cpu">
+              <div class="who">Sin modelo<span>extraer, Tesseract, limpiar</span></div>
+              <div class="gantt"><div class="g" id="g-cpu"></div><div class="sem" id="sem-cpu"></div></div>
+              <div class="fx" id="fx-cpu"></div>
+            </div>
+            <div class="verdict">
+              <div class="n" id="v-par">1<small>archivos en paralelo</small></div>
+              <div class="n" id="v-time">–<small>tiempo estimado</small></div>
+              <div class="n" id="v-cost">–<small>coste en nube · USD</small></div>
+              <div class="tip" id="v-tip"></div>
+            </div>
+          </div>
+
+          <div class="block warnblock" id="price-unknown" hidden><b>Precio del modelo desconocido</b><span>genai-prices aún no tiene tabla para «modelo recién salido». El tiempo se estima igual; el coste no. Si conoces el precio, añádelo y la app lo usará hasta que llegue el oficial.</span><div class="addprice"><label>Entrada <input placeholder="$ / M tokens"></label><label>Salida <input placeholder="$ / M tokens"></label><span class="btn" style="padding:5px 10px">Añadir precios</span></div></div>
+          <div class="ram" style="margin-top:14px"><span id="ram-label">Memoria GPU</span><div class="bar" id="ram-bar"></div></div>
+
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><span class="btn ghost">Restablecer</span><span class="btn">Guardar como nuevo…</span><span class="btn primary">Guardar en «Apuntes a mano»</span></div>
+        </div>
+      </div>
+      <aside class="notes">
+        <h3>Juega con él</h3>
+        <ul>
+          <li>Sube los workers a 8 con el 7b en OCR: no pasa nada. La GPU tiene un permiso y todo lo demás espera detrás. Eso es <code>effective_workers()</code>.</li>
+          <li>Pasa «Describir figuras» a la nube: la GPU se queda sólo con las páginas, la barra baja y aparece la alternativa con su coste.</li>
+          <li>Pon 7b en OCR y 32b en figuras: la app lo bloquea. Dos modelos locales no caben en la GPU y es exactamente como se rompió.</li>
+          <li>Cambia a «Archivo · 3 000» con el 7b: verás por qué el README dice que un archivo grande va con Tesseract.</li>
+          <li>Pon todo en nube y sube workers: ahora sí escalan, hasta los 4 permisos del <code>_remote_lock</code>; el techo pasa a ser el coste.</li>
+        </ul>
+        <div class="why">Las reglas son las del motor: un permiso GPU (<code>_page_ocr_lock</code>, compartido por OCR y figuras si son locales), cuatro de nube (<code>_remote_lock</code>), un solo modelo local residente (<code>effective_figure_model</code>). Los segundos por página son los del planner; los precios, de ejemplo.</div>
+        <p class="hand">→ ¿este mismo widget, en vivo, en «En marcha»?</p>
+      </aside>
+    </div>
+
+    <!-- 6 · Equipo y sincronización -->
+    <div class="screen" id="s6" role="tabpanel" hidden>
+      <div class="win">
+        <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="title">Equipo y sincronización</div><div class="step"></div></div>
+        <div class="body set">
+          <nav>
+            <a href="#" class="cur">Tu equipo</a><a href="#">Sincronizaciones</a><a href="#">Pipeline</a><a href="#">Avanzado</a>
+          </nav>
+          <div class="group">
+            <h4>Lo que tienes en este Mac</h4>
+            <div class="kit">
+              <div class="it"><div><b>Motor rápido · Tesseract</b><span>Incluido en la app · eng+spa</span></div><span class="pill ok"><span class="dot"></span>Listo</span></div>
+              <div class="it"><div><b>Ollama</b><span>v0.6 · en marcha · 1 modelo cargado</span></div><span class="pill ok"><span class="dot"></span>Listo</span></div>
+              <div class="it"><div><b>qwen2.5vl:7b</b><span>5,6 GB · lee páginas y describe figuras</span></div><span class="pill ok"><span class="dot"></span>Instalado</span></div>
+              <div class="it"><div><b>qwen2.5vl:32b</b><span>20 GB · más preciso · ~2,5 min/pág</span></div><span class="btn ghost" style="padding:4px 10px">Descargar</span></div>
+              <div class="it"><div><b>OpenAI</b><span>Clave guardada en el llavero · gpt-4o-mini, gpt-4o</span></div><span class="pill warn"><span class="dot"></span>Saldo agotado</span></div>
+              <div class="it"><div><b>Memoria</b><span>48 GB · GPU hasta ~36 GB · 5,6 GB en uso</span></div><span class="pill mute">ok</span></div>
+              <div class="it" style="grid-column:1/-1"><div><b>Precios de modelos · USD</b><span>genai-prices · actualizados hace 2 h · 1 modelo sin precio: «modelo recién salido» → <u>Añadir precios</u></span></div><span class="pill warn"><span class="dot"></span>1 sin precio</span></div>
+            </div>
+            <h4 style="margin-top:10px">Carpetas sincronizadas</h4>
+            <div class="sync">
+              <div class="paths"><span class="p"><b>Vigila</b>~/Escaneos</span><span class="p"><b>Escribe en</b>~/Obsidian/Apuntes</span><small>Preajuste «Apuntes a mano» · última conversión hace 2 h · 3 archivos hoy</small></div>
+              <span class="toggle on"></span>
+            </div>
+            <div class="sync" style="border-style:dashed">
+              <div class="paths"><span class="p" style="color:var(--muted)">Añadir carpeta sincronizada…</span><small>Elige carpeta a vigilar, carpeta de salida y preajuste</small></div>
+              <span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <aside class="notes">
+        <h3>Qué decide esta pantalla</h3>
+        <ul>
+          <li>«Tu equipo» responde de un vistazo a <i>qué tengo configurado</i>: motores, modelos con su tamaño, clave de nube y memoria, con el mismo sistema de pastillas que la cola. El aviso de saldo agotado vive aquí, no en un reintento por página.</li>
+          <li>Cada sincronización es una tripleta: carpeta vigilada, <b>carpeta de salida propia</b>, preajuste. Puedes tener varias (escaneos → Obsidian; descargas → otra).</li>
+          <li>La sincronización corre como proceso silencioso en segundo plano (icono en la barra de menús) y usa el <code>skip_existing</code> del manifest para convertir sólo lo nuevo.</li>
+        </ul>
+        <div class="why">«Avanzado» sigue exponiendo <code>config.py</code> tal cual (DPI, idioma, timeouts, <code>.chunks.json</code>) con «Restablecer». No hay que traducir cada campo; hay que dejar claro que no hace falta tocarlos.</div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Preajustes</div>
+      <div class="prose"><h2>Cómo se traducen a lo que el motor ya hace</h2><p style="color:var(--ink-2);margin-top:8px">Un preajuste es un pipeline guardado con nombre. Los tres que vienen de serie son puntos de partida editables; ninguno necesita código nuevo en el motor.</p></div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Preajuste</th><th>Para quién</th><th>Flags equivalentes</th><th>Lo que la app decide sola</th></tr></thead>
+        <tbody>
+          <tr><td><b>Rápido</b></td><td>Documentos impresos, informes, Office</td><td><div class="stack"><code>--ocr-backend tesseract</code><code>--no-llm</code><code>--clean</code><code>--tables</code></div></td><td>Workers = núcleos disponibles</td></tr>
+          <tr><td><b>Apuntes a mano</b></td><td>Escaneos manuscritos, fórmulas, esquemas</td><td><div class="stack"><code>--ocr-backend ollama</code><code>--describe-figures</code><code>--review-model openai:gpt-4o-mini</code></div></td><td>Modelo según RAM · <code>effective_workers()</code> = 1 · DPI 300 · un solo modelo local residente</td></tr>
+          <tr><td><b>Archivo grande</b></td><td>Miles de archivos, escaneos de exámenes</td><td><div class="stack"><code>--ocr-backend tesseract</code><code>--skip-existing</code><code>--workers 4</code><code>--report</code></div></td><td>Aviso previo si la carpeta supera N archivos con IA seleccionada</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="tokens">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Coste antes de convertir</div>
+      <div class="prose"><h2>Cuántos tokens tiene «una página»</h2><p style="color:var(--ink-2);margin-top:8px">No se adivina: se calcula con lo que el planner ya sabe antes de llamar a ningún modelo. Una página puede llevar texto, imagen o las dos, y cuestan cosas muy distintas. Los tokens de imagen dependen de los píxeles, no del tamaño del archivo — y ese mismo número explica también el <i>tiempo</i> del modelo local.</p></div>
+    </div>
+    <div class="tok">
+      <div>
+        <h4>Página escaneada · OCR</h4>
+        <div class="pg"><span class="thumb lines"></span><div class="f">300 dpi → tope <b>2 200 px</b> de lado<br>gpt-4o: encaja en 2048, lado corto a 768 → <b>4 mosaicos × 170 + 85 ≈ 765 tok</b><br>qwen2.5vl: parches de 28 px → 2200×1650 / 28² ≈ <b>4 600 tok</b></div></div>
+        <p>Entrada: de los píxeles del render, determinista. Salida: hasta <code>max_tokens 3072</code>; se estima con la media de tus páginas anteriores del mismo tipo, o ~600 sin historial.</p>
+      </div>
+      <div>
+        <h4>Figura · describir</h4>
+        <div class="pg"><span class="thumb fig"></span><div class="f">recorte al <b>bbox</b> de la figura, tope <b>1 024 px</b><br>gpt-4o-mini: lado corto ≤ 768 → <b>1–2 mosaicos ≈ 255–425 tok</b><br>salida: <code>max_tokens 512</code>, ~150 típicos</div></div>
+        <p>El detector de figuras devuelve los bboxes antes de llamar a nada, así que se sabe cuántas hay y de qué tamaño.</p>
+      </div>
+      <div>
+        <h4>Texto · revisar erratas</h4>
+        <div class="pg"><span class="thumb text"></span><div class="f">el revisor no ve imagen: sólo texto<br>entrada ≈ <b>caracteres / 4</b> del Markdown de la página<br>salida ≈ misma longitud (devuelve el texto corregido)</div></div>
+        <p>Para un PDF con texto el Markdown existe antes de convertir; para uno escaneado se estima con la salida prevista del OCR. La etapa más barata y la más predecible.</p>
+      </div>
+    </div>
+    <p class="prose" style="margin-top:16px;font-size:14px;color:var(--ink-2)">Estimación = Σ páginas (entrada por píxeles o texto + salida estimada) × precio por millón de <code>genai-prices</code>, en USD. Cuando el modelo no tiene tabla, la app dice «precio del modelo desconocido» y ofrece añadir entrada/salida por millón a mano. Nunca enseña $0 por no saber.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Investigación</div>
+      <div class="prose"><h2>De dónde sale cada patrón</h2><p style="color:var(--ink-2);margin-top:8px">No existe hoy una app de escritorio para Docling, Marker o MarkItDown: todos son CLI o web. El hueco es real y los patrones ya están resueltos en categorías vecinas.</p></div>
+    </div>
+    <div class="pat">
+      <article><h3>Presets + cola con ETA</h3><p>HandBrake convirtió un compresor de vídeo con cientos de parámetros en «elige un preset, añade a la cola». Cada elemento de la cola tiene su progreso y su tiempo restante, y se puede seguir añadiendo mientras convierte.</p><p class="take">Aquí: pantallas 2 y 3.</p><div class="src">Fuente: <a href="https://www.dvdfab.cn/resource/dvd/handbrake-batch-convert-tutorial">HandBrake batch tutorial</a> · <a href="https://github.com/HaveAGitGat/HBBatchBeast">HBBatchBeast</a> (escaneo recursivo y carpeta vigilada)</div></article>
+      <article><h3>Soltar y listo, carpeta vigilada</h3><p>Permute gana en Mac por tres cosas: arrastras, eliges formato, va; usa la GPU sin que lo sepas; y puedes asignar una carpeta que convierte solo lo que cae en ella.</p><p class="take">Aquí: la zona de soltar y el ajuste «Carpeta vigilada».</p><div class="src">Fuente: <a href="https://setapp.com/apps/permute">Permute en Setapp</a> · <a href="https://exploreai.tools/tools/permute">Permute 4 review</a></div></article>
+      <article><h3>Primer arranque con descarga de modelo guiada</h3><p>LM Studio abre con «Get your first LLM», enseña tamaño, cuantización y VRAM estimada antes de descargar, con pausa y cola. Msty propone un modelo por defecto y un desplegable para cambiarlo.</p><p class="take">Aquí: pantalla 1 y gestión de modelos en Ajustes.</p><div class="src">Fuente: <a href="https://lmstudio.ai/docs/app/basics">LM Studio docs</a> · <a href="https://docs.msty.app/getting-started/onboarding">Msty onboarding</a></div></article>
+      <article><h3>Revisión lado a lado</h3><p>Las guías de OCR coinciden en que la corrección es «la parte que la mayoría se salta»: sin ver el original junto al texto, el usuario no puede confiar. ocrAI lo implementa como Reader+Editor con reprocesar página.</p><p class="take">Aquí: pantalla 4.</p><div class="src">Fuente: <a href="https://happyseeds.ai/blog/guides/build-ocr-app-unlimited-ocr/">Build an OCR app</a> · <a href="https://github.com/Drakonis96/ocrai">ocrAI</a> · <a href="https://source.opennews.org/articles/our-search-best-ocr-tool-2023/">OpenNews OCR comparison</a></div></article>
+      <article><h3>Sin app de escritorio en la categoría</h3><p>Las comparativas 2026 de Marker, Docling, MinerU y MarkItDown sólo hablan de librerías Python y CLI; lo «accesible» es web. Nadie empaqueta un convertidor local con OCR de visión para un usuario sin terminal.</p><p class="take">Aquí: la razón de hacer esto.</p><div class="src">Fuente: <a href="https://themenonlab.blog/blog/best-open-source-pdf-to-markdown-tools-2026">Marker vs Docling vs MinerU 2026</a> · <a href="https://www.danilchenko.dev/posts/markitdown-vs-docling-vs-marker/">MarkItDown vs Docling vs Marker</a></div></article>
+      <article><h3>Tauri para el cascarón</h3><p>Tauri 2 usa la WebView del sistema: instalador de pocos MB, arranca ~3,7× más rápido y usa 75 % menos memoria que Electron. Importa aquí porque el modelo de visión ya se lleva toda la RAM.</p><p class="take">Aquí: arquitectura de abajo.</p><div class="src">Fuente: <a href="https://www.pkgpulse.com/guides/electron-vs-tauri-2026">Electron vs Tauri 2026</a> · <a href="https://www.buildmvpfast.com/blog/tauri-v2-vs-electron-desktop-apps-2026">Tauri v2 vs Electron</a></div></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Arquitectura</div>
+      <div class="prose"><h2>Qué se reutiliza y qué se añade</h2><p style="color:var(--ink-2);margin-top:8px">El motor no cambia. Se le pone delante una interfaz nativa y se le quita Docker de en medio para el usuario final.</p></div>
+    </div>
+    <div class="arch">
+      <div class="stack-diagram">
+        <div class="layer new"><div><b>Cascarón nativo · Tauri 2</b><span>Ventana, arrastrar y soltar, notificaciones, instalador .dmg / .msi</span></div><span class="tag">nuevo</span></div>
+        <div class="arrow">↓ JSON por stdin/stdout</div>
+        <div class="layer new"><div><b>Motor empaquetado · sidecar Python</b><span>PyInstaller del paquete <code>twomarkdown</code> con Tesseract y sus datos dentro</span></div><span class="tag">empaquetado</span></div>
+        <div class="arrow">↓ import</div>
+        <div class="layer keep"><div><b>twomarkdown.*</b><span>cli · config · batch · converter · agents · planner · manifest</span></div><span class="tag">se reutiliza tal cual</span></div>
+        <div class="arrow">↓ HTTP local / HTTPS</div>
+        <div class="layer"><div><b>Ollama (opcional) · API en la nube (opcional)</b><span>La app instala Ollama y descarga modelos; la clave de API vive en el llavero del sistema</span></div><span class="tag">externo</span></div>
+      </div>
+      <div class="prose" style="font-size:14.5px;color:var(--ink-2)">
+        <p><b style="color:var(--ink)">Lo que el motor tiene que exponer.</b> Hoy la CLI escribe logs y una barra de progreso. La app necesita eventos estructurados: <code>file_started</code>, <code>page_done</code> con motor usado, <code>review_applied</code> con el diff, <code>file_failed</code> con la razón. Es una capa fina sobre lo que ya llega al manifest y a la telemetría, emitida en JSON línea a línea.</p>
+        <p><b style="color:var(--ink)">Lo que desaparece para el usuario.</b> Docker, <code>.env</code>, <code>.ocr-mode</code>, <code>make</code>. Docker sigue siendo el entorno de desarrollo y de CI; sólo deja de ser requisito para usar la herramienta.</p>
+        <p><b style="color:var(--ink)">Por qué no una web.</b> El valor diferencial es local: los escaneos no salen del ordenador salvo que el usuario elija nube, y el modelo usa la GPU del Mac. Una web tendría que renunciar a una de las dos cosas.</p>
+        <p><b style="color:var(--ink)">Riesgo principal.</b> Empaquetar Python con Tesseract, PyMuPDF y pydantic-ai en un binario firmado para macOS y Windows es el trabajo feo. Conviene resolverlo en la primera semana, antes de dibujar una sola pantalla real.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Decidido en la ronda 1</div>
+      <div class="prose"><h2>Lo que ya está fijado y lo que queda</h2></div>
+    </div>
+    <div class="qs">
+      <div><div><b>Mac primero.</b><p>El cascarón Tauri compila para Windows sin esfuerzo; lo caro es el sidecar (Python + Tesseract + PyMuPDF firmados) y que «IA en este ordenador» sin GPU NVIDIA casi siempre debería recomendar la nube. Se hace Mac; si el empaquetado del sidecar sale limpio, Windows se añade después sin rediseñar nada.</p></div></div>
+      <div><div><b>Vista renderizada y editor dentro, Obsidian fuera.</b><p>Vista / Código / Editar en el mismo panel, con KaTeX para las fórmulas. Editor de texto plano sobre el <code>.md</code>, no procesador de textos.</p></div></div>
+      <div><div><b>Preajustes siempre editables.</b><p>Un preajuste es un pipeline guardado. Tres de serie, «Editar» abre el Pipeline, «Guardar como nuevo» crea otro. Fuera «Para una IA»: la app convierte a Markdown y nada más; los <code>.chunks.json</code> quedan como casilla en Avanzado.</p></div></div>
+      <div><div><b>Una vez o sincronizada, con carpeta de salida propia.</b><p>Decisión explícita arriba de la pantalla Convertir. Cada sincronización guarda entrada, salida y preajuste; corre en segundo plano desde la barra de menús.</p></div></div>
+      <div><div><b>Tiempo y coste antes de convertir.</b><p>Desglosado por etapa y modelo, con la alternativa relevante en una línea. Sale del planner y de un precio por modelo mantenido en la app.</p></div></div>
+    </div>
+    <div class="sec-head" style="margin-top:44px">
+      <div class="eyebrow">Decidido en la ronda 2</div>
+      <div class="prose"></div>
+    </div>
+    <div class="qs" style="counter-reset:q 5">
+      <div><div><b>Precios: se piden, no se mantienen.</b><p>pydantic-ai ya calcula el coste de cada llamada con <a href="https://github.com/pydantic/genai-prices">genai-prices</a>: <code>RunUsage.cost</code> devuelve dólares (o <code>None</code> si no lo sabe — nunca un cero falso), y <code>update_in_background()</code> baja la tabla nueva cada hora. Está en el lockfile del proyecto desde ya (v0.1.6). Para la estimación <i>antes</i> de convertir, <code>calc_price(Usage(…), modelo)</code> con los tokens medios por página de la telemetría. La app muestra la fecha de la tabla al lado del precio.</p></div></div>
+      <div><div><b>Semáforos en vivo durante la conversión.</b><p>Los tres carriles del Pipeline aparecen bajo la barra de progreso de «En marcha» con el estado real: qué archivo y página tiene el permiso, cuántos esperan, permisos de nube en uso y gasto acumulado.</p></div></div>
+      <div><div><b>Nube para cualquier etapa, sin preguntar dos veces.</b><p>Elegir un modelo por API ya es decir que las páginas salen del ordenador. El selector del Pipeline lo permite en OCR, figuras y revisor; la única indicación es la etiqueta «nube» en la etapa y el coste en la estimación. Fuera el aviso extra.</p></div></div>
+    </div>
+    <div class="sec-head" style="margin-top:44px">
+      <div class="eyebrow">Decidido en la ronda 3</div>
+      <div class="prose"></div>
+    </div>
+    <div class="qs" style="counter-reset:q 8">
+      <div><div><b>Los tokens de una página se calculan por píxeles y texto, no por media.</b><p>Una página puede llevar imagen, texto o ambos, y cuestan cosas muy distintas. La entrada de imagen es determinista a partir del render (tope 2 200 px en OCR, 1 024 en figuras) con la fórmula de mosaicos del proveedor; la de texto es caracteres/4; sólo la salida se estima, con el historial del usuario. Detalle en <a href="#tokens">Cuántos tokens tiene «una página»</a>.</p></div></div>
+      <div><div><b>«Precio del modelo desconocido», con «Añadir precios» a mano.</b><p>Cuando genai-prices no tiene tabla, el tiempo se estima igual y el coste dice «desconocido»; un formulario pide entrada y salida en $ por millón de tokens y la app los usa hasta que llegue el oficial. Pruébalo en el simulador con «modelo recién salido» en el revisor.</p></div></div>
+      <div><div><b>Siempre dólares.</b><p>Los precios llegan en USD y así se muestran en toda la app: $0.03, 1 ¢/página. Nada de conversiones a euros que se quedan viejas.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<footer><div class="wrap">Boceto para discusión · valores de las maquetas tomados de la carpeta <code>Apuntes/</code> de las pruebas · los tiempos por página son los del planner actual, no medidas nuevas.</div></footer>
+
+<script>
+(function(){
+  var tabs=document.querySelectorAll('.tabs [role=tab]');
+  var panels=document.querySelectorAll('[role=tabpanel]');
+  tabs.forEach(function(t){
+    t.addEventListener('click',function(){
+      tabs.forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false')});
+      panels.forEach(function(p){p.hidden=p.id!==t.dataset.tab});
+    });
+  });
+})();
+</script>
+
+<script>
+(function(){
+  // --- las reglas del motor, en pequeño ---
+  var M={
+    tess:{name:"Tesseract",kind:"cpu",gb:0,ocr:2},
+    q7:{name:"qwen2.5vl:7b",kind:"gpu",gb:5.6,ocr:40,fig:20,rev:15},
+    q32:{name:"qwen2.5vl:32b",kind:"gpu",gb:20,ocr:150,fig:40,rev:45},
+    g4m:{name:"gpt-4o-mini",kind:"cloud",gb:0,fig:5,rev:3,c_fig:.001,c_rev:.001},
+    g4o:{name:"gpt-4o",kind:"cloud",gb:0,ocr:8,fig:5,rev:3,c_ocr:.01,c_fig:.005,c_rev:.01},
+    unk:{name:"modelo recién salido",kind:"cloud",gb:0,ocr:8,fig:5,rev:3,unknown:true},
+    off:{name:"—",kind:"none",gb:0}
+  };
+  var LOADS={
+    apuntes:{files:8,pages:25,scanned:22,figs:6,label:"25 páginas · 22 escaneadas · ~6 figuras · 41 MB"},
+    archivo:{files:3000,pages:12000,scanned:9000,figs:1200,label:"12 000 páginas · 9 000 escaneadas · ~1 200 figuras"}
+  };
+  var GPU_MAX=36, REMOTE_PERMITS=4, CPU_PER_PAGE=0.6;
+  var state={load:"apuntes",workers:4,ocr:"q7",fig:"q7",rev:"g4m"};
+  var $=function(id){return document.getElementById(id)};
+
+  function fmtTime(s){ if(s<60) return Math.round(s)+" s"; if(s<3600) return "~"+Math.round(s/60)+" min"; var h=s/3600; return "~"+(h<10?h.toFixed(1):Math.round(h))+" h"; }
+  function fmtUsd(e){ if(e==null) return "desconocido"; if(e===0) return "$0"; if(e<0.1) return (e*100).toFixed(e<0.01?2:0)+" ¢"; return "$"+e.toFixed(2); }
+
+  function compute(st){
+    var L=LOADS[st.load], o=M[st.ocr], f=M[st.fig], r=M[st.rev];
+    var locals={}; [o,f,r].forEach(function(m){ if(m.kind==="gpu") locals[m.name]=m.gb; });
+    var names=Object.keys(locals);
+    var res={gpu:0,cloud:0,cpu:L.pages*CPU_PER_PAGE,cost:0,costUnknown:false,locals:names,gb:names.reduce(function(a,n){return a+locals[n]},0),blocked:null,stages:{}};
+    if(names.length>1){ res.blocked={title:"Dos modelos locales no caben en la GPU a la vez",body:names.join(" + ")+" = "+res.gb.toFixed(1)+" GB residentes. Con uno solo funciona; con dos, el segundo se queda sin memoria al codificar la imagen y todas las llamadas siguientes fallan. Elige el mismo modelo para ambas etapas o pasa una a la nube."}; }
+    function add(m,secs,cost,key){ if(m.kind==="gpu") res.gpu+=secs; else if(m.kind==="cloud"){res.cloud+=secs; res.cost+=cost; if(m.unknown) res.costUnknown=true;} else if(m.kind==="cpu") res.cpu+=secs; res.stages[key]=m.kind; }
+    add(o, L.scanned*(o.ocr||0), L.scanned*(o.c_ocr||0),"ocr");
+    if(f.kind!=="none") add(f, L.figs*(f.fig||0), L.figs*(f.c_fig||0),"fig"); else res.stages.fig="none";
+    if(r.kind!=="none") add(r, L.pages*(r.rev||0), L.pages*(r.c_rev||0),"rev"); else res.stages.rev="none";
+    var usesGpu=res.gpu>0;
+    res.par = usesGpu ? 1 : st.workers;                       // effective_workers()
+    res.cloudPar = Math.min(REMOTE_PERMITS, st.workers);      // _remote_lock
+    res.t_gpu=res.gpu; res.t_cloud=res.cloud/res.cloudPar; res.t_cpu=res.cpu/st.workers;
+    res.total=Math.max(res.t_gpu,res.t_cloud,res.t_cpu);
+    res.bottleneck = res.total===res.t_gpu&&res.gpu>0 ? "gpu" : res.total===res.t_cloud&&res.cloud>0 ? "cloud" : "cpu";
+    return res;
+  }
+
+  function render(){
+    var st=state, L=LOADS[st.load], R=compute(st);
+    $("loadinfo").textContent=L.label;
+    $("workersv").textContent=st.workers;
+    $("workersnote").textContent = R.par<st.workers ? "Pides "+st.workers+", pero con un modelo local sólo 1 avanza a la vez" : st.workers+" archivos avanzan a la vez";
+    // stages
+    document.querySelectorAll(".stage[data-stage]").forEach(function(el){
+      var k=el.dataset.stage, kind=R.stages[k]; el.className="stage"+(kind==="gpu"?" on-gpu":kind==="cloud"?" on-cloud":kind==="cpu"?" on-cpu":"");
+      el.querySelector(".tag").textContent = kind==="gpu"?"GPU local":kind==="cloud"?"nube":kind==="cpu"?"CPU":"";
+      if(R.blocked && kind==="gpu") el.classList.add("bad");
+    });
+    var b=$("blocker"); b.hidden=!R.blocked; if(R.blocked) b.innerHTML="<b>"+R.blocked.title+"</b><span>"+R.blocked.body+"</span>";
+    // lanes
+    var max=Math.max(R.t_gpu,R.t_cloud,R.t_cpu,1);
+    function lane(id,t,raw,hot,fx,sem,idle){ var el=$("lane-"+id); el.className="lane"+(hot?" hot":"")+(idle?" idle":""); $("g-"+id).innerHTML="<i style='width:"+Math.max(raw>0?2:0,Math.round(t/max*100))+"%'></i>"; $("fx-"+id).innerHTML=fx; $("sem-"+id).innerHTML=sem; }
+    var gpuSem = R.gpu>0 ? "<i class='busy'></i><small>1 permiso · "+(R.stages.fig==="gpu"&&R.stages.ocr==="gpu"?"OCR y figuras lo comparten":"lo usa "+(R.stages.ocr==="gpu"?"OCR":R.stages.fig==="gpu"?"figuras":"el revisor"))+"</small>" : "<i></i><small>sin uso</small>";
+    lane("gpu",R.t_gpu,R.gpu,R.bottleneck==="gpu",R.gpu>0?"<b>"+fmtTime(R.t_gpu)+"</b> en serie":"—",gpuSem,R.gpu===0);
+    var cs=""; for(var i=0;i<REMOTE_PERMITS;i++) cs+="<i class='"+(i<R.cloudPar&&R.cloud>0?"busy":"free")+"'></i>"; cs+="<small>"+REMOTE_PERMITS+" permisos · "+(R.cloud>0?R.cloudPar+" en uso":"sin uso")+"</small>";
+    lane("cloud",R.t_cloud,R.cloud,R.bottleneck==="cloud",R.cloud>0?"<b>"+fmtTime(R.t_cloud)+"</b> · "+(R.costUnknown?"precio desconocido":fmtUsd(R.cost)):"—",cs,R.cloud===0);
+    var ps=""; for(var i=0;i<Math.min(st.workers,8);i++) ps+="<i class='busy'></i>"; ps+="<small>"+st.workers+" workers</small>";
+    lane("cpu",R.t_cpu,R.cpu,R.bottleneck==="cpu","<b>"+fmtTime(R.t_cpu)+"</b>",ps,false);
+    // verdict
+    $("v-par").firstChild.textContent=R.blocked?"–":R.par;
+    $("v-time").firstChild.textContent=R.blocked?"–":fmtTime(R.total);
+    $("v-cost").firstChild.textContent=R.blocked?"–":R.costUnknown?"?":fmtUsd(R.cost);
+    $("price-unknown").hidden=!R.costUnknown||!!R.blocked;
+    $("v-tip").innerHTML=tip(st,R);
+    // ram
+    var pct=Math.min(100,R.gb/GPU_MAX*100);
+    $("ram-label").textContent="Memoria GPU · "+GPU_MAX+" GB máx. · "+(R.gb?R.gb.toFixed(1)+" GB residentes ("+R.locals.join(" + ")+")":"ningún modelo local");
+    $("ram-bar").innerHTML="<i style='width:"+pct+"%;background:"+(R.blocked?"var(--bad)":"var(--ink)")+"'></i>";
+  }
+
+  function tip(st,R){
+    if(R.blocked) return "Arregla la GPU y el cálculo vuelve.";
+    if(R.bottleneck==="gpu"){
+      var alt=Object.assign({},st,{fig: st.fig==="off"?"off":"g4m"});
+      var A=compute(alt);
+      var s="Todo espera detrás del único permiso de la GPU: los "+st.workers+" workers que pides no cambian nada. ";
+      if(st.fig!=="off"&&M[st.fig].kind==="gpu") s+="<a data-set='fig:g4m'>Pasa «Describir figuras» a gpt-4o-mini</a> y la GPU sólo lee páginas: "+fmtTime(A.total)+" · "+fmtUsd(A.cost)+". ";
+      var B=compute(Object.assign({},st,{ocr:"g4o"})); s+="<a data-set='ocr:g4o'>Leer también en la nube</a>: "+fmtTime(B.total)+" · "+fmtUsd(B.cost)+".";
+      if(st.load==="archivo") s+=" Para un archivo así, <a data-set='ocr:tess'>Tesseract</a> baja a "+fmtTime(compute(Object.assign({},st,{ocr:"tess"})).total)+" a coste 0.";
+      return s;
+    }
+    if(R.bottleneck==="cloud"){
+      var s="Nada local: los workers escalan hasta los "+REMOTE_PERMITS+" permisos de nube. ";
+      if(st.workers<REMOTE_PERMITS) s+="Con 4 workers irías al máximo. "; else s+="Más workers no ayudan: el techo ahora es la cuota del proveedor y tu saldo. ";
+      return s;
+    }
+    return "Sin IA en la ruta crítica: manda la CPU, y sí escala con los workers. Es el preajuste «Rápido».";
+  }
+
+  document.querySelectorAll("#sim select.pick").forEach(function(sel){ sel.addEventListener("change",function(){ state[sel.dataset.for]=sel.value; render(); }); });
+  $("workers").addEventListener("input",function(e){ state.workers=+e.target.value; render(); });
+  document.querySelectorAll("#sim [data-load]").forEach(function(sp){ sp.addEventListener("click",function(){ document.querySelectorAll("#sim [data-load]").forEach(function(x){x.classList.toggle("on",x===sp)}); state.load=sp.dataset.load; render(); }); });
+  $("v-tip").addEventListener("click",function(e){ var a=e.target.closest("a[data-set]"); if(!a) return; var kv=a.dataset.set.split(":"); state[kv[0]]=kv[1]; document.querySelector("#sim select[data-for="+kv[0]+"]").value=kv[1]; render(); });
+  render();
+})();
+</script>

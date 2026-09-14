@@ -126,17 +126,13 @@ def convert(
         None,
         "--workers",
         help=(
-            "Parallel file conversions "
-            f"(default: {conversion_config.parallel_workers})"
+            f"Parallel file conversions (default: {conversion_config.parallel_workers})"
         ),
     ),
     figure_model: str | None = typer.Option(
         None,
         "--figure-model",
-        help=(
-            "Vision model for figure captions "
-            f"(default: {llm_config.figure_model})"
-        ),
+        help=(f"Vision model for figure captions (default: {llm_config.figure_model})"),
     ),
     review_model: str | None = typer.Option(
         None,

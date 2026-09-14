@@ -11,11 +11,27 @@ ifneq ($(filter true 1,$(CI) $(NATIVE)),)
 define run_uv
 uv $(1)
 endef
+# Same transport as run_uv; test gets its own macro so the ulimit fix below
+# (Docker-only) doesn't leak into every other run_uv caller.
+define run_uv_test
+uv $(1)
+endef
 else
 define run_uv
 docker compose run --rm $(SERVICE) uv $(1)
 endef
+# `ulimit -c 0` disables core dumps for this invocation only: pytest segfaults
+# at interpreter teardown *after* the whole suite has already passed (see
+# INCONSISTENCIES.md), and the container was leaving a 560 MB core file at the
+# repo root on every run. This contains the symptom; it does not fix it.
+define run_uv_test
+docker compose run --rm $(SERVICE) sh -c 'ulimit -c 0 && uv $(1)'
+endef
 endif
+
+# Frontend package manager for app/ — read app/package.json at need; kept as
+# a variable so a switch to another package manager is a one-line change.
+FRONTEND_PM ?= bun
 
 # ------------------------------ Help ------------------------------ #
 .PHONY: help
@@ -51,17 +67,27 @@ help:
 	@echo "Terminals:"
 	@echo "  make backend-shell            Open a shell in the backend container"
 	@echo ""
+	@echo "Desktop app (native host, see docs/README.md Key decisions):"
+	@echo "  make app                      Run API (uv, background) + web UI (bun) in one terminal"
+	@echo "  make app-down                  Kill this repo's own uvicorn/vite dev processes"
+	@echo "  make app-web                   bun dev only (app/, port 5173)"
+	@echo "  make app-build                 bun build (app/, production bundle)"
+	@echo ""
 	@echo "Debugging:"
 	@echo "  make logs                     Tail backend logs"
 	@echo ""
 	@echo "Code quality:"
 	@echo "  make format                   ruff format"
 	@echo "  make lint-fix                 ruff check --fix"
-	@echo "  make lint                     ruff check"
+	@echo "  make lint                     lint-backend + lint-frontend (frontend skips if not installed)"
+	@echo "  make lint-backend             ruff check"
+	@echo "  make lint-frontend            app/ package-manager lint"
 	@echo ""
 	@echo "Testing:"
-	@echo "  make test                     Unit tests (exclude integration)"
-	@echo "  make test TEST=tests/foo.py   Run a specific test path"
+	@echo "  make test                     test-backend + test-frontend (frontend skips if not installed)"
+	@echo "  make test-backend             Unit tests (exclude integration)"
+	@echo "  make test-backend TEST=tests/foo.py   Run a specific test path"
+	@echo "  make test-frontend            app/ package-manager test"
 	@echo "  make test-integration         Integration tests"
 	@echo "  make bench                    Compare conversion methods (workers, OCR)"
 	@echo ""
@@ -76,7 +102,7 @@ help:
 # Feature flags live in twomarkdown/config.py; .env is credentials only.
 fresh-setup:
 	@echo ":: fresh-setup: ."
-	cp env_template .env
+	cp .env_template .env
 	$(MAKE) down
 	@echo "Ready. Next: make build   OR   make build ollama (requires Ollama on host)"
 
@@ -223,6 +249,154 @@ backend-shell:
 	@echo ":: shell: backend"
 	docker compose exec $(SERVICE) bash
 
+# ----------------------------- Desktop app (native host) ----------------------------- #
+# THE documented exception to "Docker is the transport": the API here needs
+# host Ollama, the host GPU, and arbitrary user folders outside any bind
+# mount — none of which a container can give it. See docs/README.md's Key
+# decisions for why. `uv run` on the host is normally forbidden by this
+# Makefile's own rule ("never uv add/sync on the host") but IS allowed for
+# this target only, because `uv run` here only needs the venv synced, never
+# a lockfile change — first run installs into a native .venv from the
+# existing uv.lock, same dependency set the Docker image uses.
+.PHONY: app app-web app-build app-down
+
+# Ports `make app` binds: fail fast (before touching either process) instead
+# of uvicorn/vite themselves erroring out confusingly (or, worse, silently
+# talking to somebody else's already-running server) when a previous `make
+# app` was never torn down. Named by PID+command via `lsof` so the message
+# is actionable — "which terminal do I go Ctrl-C in" — not just "port busy".
+#
+# N5: `make app-down para pararlos` is only true when the process holding
+# the port is actually one of ours — the exact same test `app-down` itself
+# uses to decide what it will kill (a uvicorn whose command names
+# `twomarkdown.server` on 8765, a vite dev server whose cwd is this repo's
+# `app/` on 5173). A port held by anything else (some unrelated `python3 -m
+# http.server`, another app entirely) survives `make app-down` untouched —
+# telling the user to run it anyway sends them to a command that will report
+# "nothing of ours was running" and leave the port exactly as busy as
+# before. Branch the remedy on that same ownership test instead, and keep
+# both lines in Spanish (the app's copy is Spanish-only; the old first line
+# was English).
+define check_port_free
+	pid=$$(lsof -ti tcp:$(1) -sTCP:LISTEN 2>/dev/null | head -1); \
+	if [ -n "$$pid" ]; then \
+		cmd=$$(ps -p $$pid -o command= 2>/dev/null); \
+		ours=0; \
+		case "$(1)" in \
+			8765) echo "$$cmd" | grep -q "twomarkdown.server" && ours=1 ;; \
+			5173) cwd=$$(lsof -a -p $$pid -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'); \
+				case "$$cwd" in \
+					"$(CURDIR)/app"|"$(CURDIR)/app/") ours=1 ;; \
+				esac ;; \
+		esac; \
+		echo ":: app: el puerto $(1) ya está en uso (pid $$pid: $$cmd)"; \
+		if [ "$$ours" = "1" ]; then \
+			echo ":: app: make app-down para pararlos"; \
+		else \
+			echo ":: app: lo usa otro programa — páralo tú o cambia de puerto"; \
+		fi; \
+		exit 1; \
+	fi
+endef
+
+
+app-web:
+	@echo ":: app-web: app"
+	cd app && $(FRONTEND_PM) install && $(FRONTEND_PM) run dev
+
+app-build:
+	@echo ":: app-build: app"
+	cd app && $(FRONTEND_PM) install && $(FRONTEND_PM) run build
+
+# Runs the FastAPI server natively (background, uv-managed venv) and the Vite
+# dev server in the foreground, in one terminal. Ctrl-C (or any exit) tears
+# down the API via a trap so a stray uvicorn never survives the terminal.
+#
+# N10: a bare `kill %1` (SIGTERM only, no follow-up) used to be able to leave
+# the uvicorn process — and its `uv run` parent — alive indefinitely: an open
+# `WS /api/jobs/{id}/events` connection kept uvicorn's own graceful shutdown
+# waiting forever (the port closed, but the python process sat in state S).
+# `--timeout-graceful-shutdown 3` and `server/app.py`'s lifespan (which now
+# actively closes every open events socket) fix that from the inside, but
+# this trap no longer just trusts it: it polls for the pid to actually
+# disappear and escalates to SIGKILL — of both the uvicorn pid and its `uv
+# run` parent — if it hasn't within ~5s, so Ctrl-C here can never leave an
+# orphan pair behind either.
+app:
+	@echo ":: app: api+web"
+	@$(call check_port_free,8765)
+	@$(call check_port_free,5173)
+	@uv run uvicorn twomarkdown.server:app --host 127.0.0.1 --port 8765 --timeout-graceful-shutdown 3 & \
+	UVPID=$$!; \
+	trap 'kill $$UVPID 2>/dev/null; n=0; while kill -0 $$UVPID 2>/dev/null && [ $$n -lt 5 ]; do n=$$((n + 1)); sleep 1; done; if kill -0 $$UVPID 2>/dev/null; then echo ":: app: uvicorn (pid $$UVPID) did not exit after 5s, sending SIGKILL"; kill -9 $$UVPID 2>/dev/null; fi; PPID_UV=$$(ps -o ppid= -p $$UVPID 2>/dev/null | tr -d " "); if [ -n "$$PPID_UV" ] && kill -0 $$PPID_UV 2>/dev/null; then echo ":: app: uv run parent (pid $$PPID_UV) still alive, sending SIGKILL"; kill -9 $$PPID_UV 2>/dev/null; fi' EXIT; \
+	echo ":: app: waiting for api"; \
+	i=0; \
+	until curl -s -o /dev/null 127.0.0.1:8765; do \
+		i=$$((i + 1)); \
+		if [ $$i -ge 20 ]; then \
+			echo ":: app: api did not come up after 20s, continuing anyway"; \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
+	cd app && $(FRONTEND_PM) install && $(FRONTEND_PM) run dev
+
+# Kills only THIS repo's own `make app` processes: a uvicorn bound to
+# twomarkdown.server, and a vite dev server whose cwd is this repo's app/ —
+# matched by cwd (via `lsof -d cwd`), not just by command name, so a `make
+# app` running from a different checkout of this same repo is left alone.
+# `make app` itself never needs this (its own `trap ... EXIT` already tears
+# its own two processes down on Ctrl-C) — it's for the case that trap didn't
+# run: a killed terminal, a crashed shell, `make app` started in the
+# background.
+# N10: a plain `kill $pid` only *asks* the process to stop — if it ignores
+# that (the whole bug this fixes: an open events WebSocket used to make
+# uvicorn's own graceful shutdown wait forever, port closed but the process
+# still in state S), `app-down` used to report success and leave it running.
+# Each kill below is followed by up to ~5s of polling (`kill -0`, 1s steps)
+# and, if the pid is still alive after that, a `kill -9` — of the uvicorn pid
+# itself and, since it is a *child* of `uv run` (this target's own
+# documented host exception — see the block comment above `app-web`), that
+# parent pid too, so neither half of the pair survives.
+define wait_then_kill9
+	n=0; \
+	while kill -0 $(1) 2>/dev/null && [ $$n -lt 5 ]; do n=$$((n + 1)); sleep 1; done; \
+	if kill -0 $(1) 2>/dev/null; then \
+		echo ":: app-down: $(2) (pid $(1)) did not exit after 5s, sending SIGKILL"; \
+		kill -9 $(1) 2>/dev/null || true; \
+	fi
+endef
+
+app-down:
+	@echo ":: app-down: api (8765) + web (5173)"
+	@found=0; \
+	pid=$$(lsof -ti tcp:8765 -sTCP:LISTEN 2>/dev/null | head -1); \
+	if [ -n "$$pid" ] && ps -p $$pid -o command= 2>/dev/null | grep -q "twomarkdown.server"; then \
+		ppid=$$(ps -o ppid= -p $$pid 2>/dev/null | tr -d " "); \
+		echo ":: app-down: killing uvicorn (pid $$pid)"; \
+		kill $$pid 2>/dev/null || true; \
+		$(call wait_then_kill9,$$pid,uvicorn); \
+		if [ -n "$$ppid" ] && kill -0 $$ppid 2>/dev/null; then \
+			echo ":: app-down: uv run parent (pid $$ppid) still alive, sending SIGKILL"; \
+			kill -9 $$ppid 2>/dev/null || true; \
+		fi; \
+		found=1; \
+	fi; \
+	pid=$$(lsof -ti tcp:5173 -sTCP:LISTEN 2>/dev/null | head -1); \
+	if [ -n "$$pid" ]; then \
+		cwd=$$(lsof -a -p $$pid -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'); \
+		case "$$cwd" in \
+			"$(CURDIR)/app"|"$(CURDIR)/app/") \
+				echo ":: app-down: killing vite (pid $$pid)"; \
+				kill $$pid 2>/dev/null || true; \
+				$(call wait_then_kill9,$$pid,vite); \
+				found=1 ;; \
+			*) \
+				echo ":: app-down: port 5173 is in use by pid $$pid but its cwd ($$cwd) is not this repo's app/ — leaving it alone" ;; \
+		esac; \
+	fi; \
+	if [ "$$found" = "0" ]; then echo ":: app-down: nothing of ours was running"; fi
+
 # ----------------------------- Debugging ----------------------------- #
 .PHONY: logs
 
@@ -231,7 +405,7 @@ logs:
 	docker compose logs -f $(SERVICE)
 
 # ----------------------------- Code Formatting ----------------------------- #
-.PHONY: format lint-fix lint
+.PHONY: format lint-fix lint-backend lint-frontend lint
 
 format:
 	@echo ":: format: backend"
@@ -241,23 +415,63 @@ lint-fix:
 	@echo ":: lint-fix: backend"
 	$(call run_uv,run --extra dev ruff check --fix twomarkdown/ tests/)
 
-lint:
+lint-backend:
 	@echo ":: lint: backend"
 	$(call run_uv,run --extra dev ruff check twomarkdown/ tests/)
 
+# Atomic on purpose per the CI contract, but app/ isn't always installed on a
+# dev machine (or a CI job that never set up Node/Bun), so this one degrades
+# instead of failing when there is nothing to lint.
+lint-frontend:
+	@echo ":: lint: frontend"
+	@if [ -d app/node_modules ]; then \
+		cd app && $(FRONTEND_PM) run --if-present lint; \
+	else \
+		echo ":: lint: frontend :: skipped (app/node_modules missing)"; \
+	fi
+
+lint:
+	$(MAKE) lint-backend
+	$(MAKE) lint-frontend
+
 # ----------------------------- Testing ----------------------------- #
-.PHONY: test test-integration bench
+.PHONY: test-backend test-frontend test test-integration bench
 
 # Usage:
-#   make test
-#   make test TEST=tests/foo.py
-test:
+#   make test-backend
+#   make test-backend TEST=tests/foo.py
+#   make test              (backend + frontend)
+test-backend:
 	@echo ":: test: backend"
 ifeq ($(TEST),)
-	$(call run_uv,run --extra dev pytest tests/ -m "not integration and not bench" -v)
+	$(call run_uv_test,run --extra dev pytest tests/ -m "not integration and not bench" -v)
 else
-	$(call run_uv,run --extra dev pytest $(TEST) -v)
+	$(call run_uv_test,run --extra dev pytest $(TEST) -v)
 endif
+
+# Same skip-when-absent behavior as lint-frontend, and for the same reason —
+# but checked with `node -e` against app/package.json's own `scripts` object
+# instead of `$(FRONTEND_PM) run --if-present test`: bun's --if-present only
+# suppresses the "script not found" error, it does not stop bun from then
+# falling back to executing "test" as a bare shell command — and /bin/test
+# is a real binary that exits 1 when called with no arguments, so the
+# no-script case failed the same as a real test failure would. "lint" has
+# no such collision, so lint-frontend's `--if-present` is unaffected.
+test-frontend:
+	@echo ":: test: frontend"
+	@if [ -d app/node_modules ]; then \
+		if node -e "process.exit((require('./app/package.json').scripts||{}).test?0:1)"; then \
+			cd app && $(FRONTEND_PM) run test; \
+		else \
+			echo ":: test: frontend :: skipped (no \"test\" script in app/package.json)"; \
+		fi; \
+	else \
+		echo ":: test: frontend :: skipped (app/node_modules missing)"; \
+	fi
+
+test:
+	$(MAKE) test-backend
+	$(MAKE) test-frontend
 
 test-integration:
 	@echo ":: test-integration: backend"
@@ -266,6 +480,21 @@ test-integration:
 bench:
 	@echo ":: bench: backend"
 	$(call run_uv,run --extra dev pytest tests/test_bench_methods.py -m bench -v)
+
+# ----------------------------- CI Only ----------------------------- #
+.PHONY: sync-ci tesseract-ci
+
+# Native dependency install for GitHub Actions runners — no Compose stack
+# there, so this is the CI-only counterpart to `make uv-sync` (host `uv`
+# use is otherwise forbidden by this Makefile's own rule; see AGENTS.md).
+sync-ci:
+	@echo ":: sync-ci: ."
+	uv sync --extra dev
+
+# Tesseract + language packs for the integration-test runner.
+tesseract-ci:
+	@echo ":: tesseract-ci: ."
+	sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa
 
 # ----------------------------- ⛔️ DANGER ZONE ⛔️ ----------------------------- #
 .PHONY: clean clean-builder

@@ -137,9 +137,7 @@ class TestConvertXlsx:
         assert markdown.count("`B") == MAX_FORMULAS_PER_SHEET
         assert "+10 fórmulas más omitidas" in markdown
 
-    def test_convert_xlsx_propagates_merged_header_value(
-        self, tmp_path: Path
-    ) -> None:
+    def test_convert_xlsx_propagates_merged_header_value(self, tmp_path: Path) -> None:
         """convert_xlsx() — a merged range repeats its top-left value, not blanks."""
         pytest.importorskip("openpyxl")
         from openpyxl import Workbook

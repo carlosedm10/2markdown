@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 import fitz
 from tqdm import tqdm
 
+from twomarkdown.batch import events
 from twomarkdown.config import pdf_ocr_config
 from twomarkdown.telemetry import span
 
@@ -99,6 +101,16 @@ def _render_page_pixmap(doc: fitz.Document, page_index: int) -> bytes:
         pix = None
 
 
+def _current_ocr_engine_name() -> str:
+    """The model that will actually answer a page, for the `page_done` event."""
+    if not _vision_model_available():
+        return "tesseract"
+    from twomarkdown.agents.image_ocr import normalize_model_id
+    from twomarkdown.config import llm_config
+
+    return normalize_model_id(llm_config.vision_model)
+
+
 def extract_pages(
     pdf_path: Path,
     *,
@@ -106,8 +118,16 @@ def extract_pages(
     show_progress: bool = False,
     doc: fitz.Document | None = None,
     cancel: threading.Event | None = None,
+    file_index: int | None = None,
 ) -> list[tuple[int, str]]:
-    """OCR PDF pages with insufficient native text; returns (page_number, text)."""
+    """OCR PDF pages with insufficient native text; returns (page_number, text).
+
+    ``file_index`` is this file's position in the running job's file list (see
+    `batch/events.py`); when set, one `page_started`/`page_done` pair is
+    emitted per page actually OCR'd, for the desktop app's live view. `None`
+    (the CLI's own calls) emits nothing — same no-op-when-unattached rule as
+    everywhere else in `batch/events.py`.
+    """
     from twomarkdown.converter import ocr as ocr_mod
 
     results: list[tuple[int, str]] = []
@@ -154,7 +174,14 @@ def extract_pages(
             png_bytes = _render_page_pixmap(opened, i)
             if cancel is not None and cancel.is_set():
                 break
-            with span("pdf.page_ocr", page=page_num):
+            if file_index is not None:
+                events.page_started(file_index, page_num)
+            page_started_at = time.perf_counter()
+            fallback_before = ocr_mod.engine_fallback_count()
+            with (
+                events.stage("ocr", page=page_num),
+                span("pdf.page_ocr", page=page_num),
+            ):
                 text = ocr_mod.ocr_image_bytes(
                     png_bytes,
                     ocr_fn=ocr_fn,
@@ -168,25 +195,46 @@ def extract_pages(
                     force_llm=scrambled or _vision_model_available(),
                     cancel=cancel,
                 ).strip()
+            fell_back = ocr_mod.engine_fallback_count() > fallback_before
+            review_changes: list[dict[str, object]] = []
             if text:
-                text = _reviewed(text, pdf_path, page_num)
+                text, review_changes = _reviewed(text, pdf_path, page_num)
                 results.append((page_num, text))
+            if file_index is not None:
+                events.page_done(
+                    file_index,
+                    page_num,
+                    engine="tesseract" if fell_back else _current_ocr_engine_name(),
+                    seconds=time.perf_counter() - page_started_at,
+                    fallback=fell_back,
+                    review_changes=review_changes,
+                )
 
     return results
 
 
-def _reviewed(text: str, pdf_path: Path, page_num: int) -> str:
+def _reviewed(
+    text: str, pdf_path: Path, page_num: int
+) -> tuple[str, list[dict[str, object]]]:
     """Proofread one page's transcription, if a reviewer is configured.
 
     Text only: the pass reads what was written and fixes what the writing itself
     contradicts. It is given no image, so it cannot tell what the page holds that
     the transcription does not — and therefore cannot invent it.
+
+    Returns the (possibly corrected) text and the diff structured for
+    `EventPageDone.review_changes` — the same real diff `describe_changes()`
+    already logs, not the model's own account of what it fixed.
     """
-    from twomarkdown.agents.page_review import review_enabled, review_page
+    from twomarkdown.agents.page_review import (
+        describe_changes_structured,
+        review_enabled,
+        review_page,
+    )
 
     if not review_enabled():
-        return text
-    with span("pdf.page_review", page=page_num):
+        return text, []
+    with events.stage("review", page=page_num), span("pdf.page_review", page=page_num):
         reviewed, changes = review_page(text)
     if changes:
         logger.info(
@@ -195,7 +243,8 @@ def _reviewed(text: str, pdf_path: Path, page_num: int) -> str:
             page_num,
             "; ".join(changes[:5]),
         )
-    return reviewed
+    structured = describe_changes_structured(text, reviewed) if changes else []
+    return reviewed, structured
 
 
 def _word_gaps(words: list) -> tuple[dict, list[float]]:

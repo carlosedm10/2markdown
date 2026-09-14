@@ -148,6 +148,33 @@ def describe_changes(original: str, reviewed: str) -> list[str]:
     return changes
 
 
+def describe_changes_structured(
+    original: str, reviewed: str
+) -> list[dict[str, object]]:
+    """Same diff as `describe_changes()`, kept structured for `EventPageDone`.
+
+    `describe_changes()` already flattens each change into one log-friendly
+    line ("before -> after"); the WS event instead wants `{line, before,
+    after}` (`schemas.ReviewChange`), so this re-walks the same opcodes rather
+    than parsing that string back apart.
+    """
+    changes: list[dict[str, object]] = []
+    original_lines = original.strip().splitlines()
+    reviewed_lines = reviewed.strip().splitlines()
+    matcher = difflib.SequenceMatcher(None, original_lines, reviewed_lines)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        changes.append(
+            {
+                "line": i1 + 1,
+                "before": " / ".join(original_lines[i1:i2]).strip(),
+                "after": " / ".join(reviewed_lines[j1:j2]).strip(),
+            }
+        )
+    return changes
+
+
 def _review_request(transcription: str) -> str:
     """The text to proofread, plus the LaTeX commands it uses."""
     commands = latex_commands_used(transcription)
@@ -176,15 +203,17 @@ def review_page(
 
     from twomarkdown.agents.image_ocr import (
         _call_with_backoff,
+        _is_out_of_quota,
         _page_ocr_lock,
         _remote_lock,
         is_local_model,
     )
+    from twomarkdown.batch import events
 
     name = model or llm_config.review_model
     permit = _page_ocr_lock if is_local_model(name) else _remote_lock
     try:
-        with permit:
+        with events.stage("review"), permit:
             result = _call_with_backoff(
                 lambda: _agent().run_sync(_review_request(transcription)),
                 what="Page review",
@@ -192,10 +221,20 @@ def review_page(
             )
     except ModelAPIError as exc:
         logger.warning("Page review API error: %s", exc)
+        if not is_local_model(name) and _is_out_of_quota(exc):
+            from twomarkdown.converter import ocr as ocr_mod
+
+            message = f"Revisión omitida: saldo agotado en {name}"
+            ocr_mod.record_soft_failure(message)
+            events.log("warning", message)
         return transcription, []
     except Exception as exc:
         logger.warning("Page review failed: %s", exc)
         return transcription, []
+
+    from twomarkdown.agents.image_ocr import _report_cloud_cost
+
+    _report_cloud_cost(name, result)
 
     reviewed = result.output.markdown
     if reviewed.strip() == transcription.strip():
