@@ -283,3 +283,166 @@ class TestReviewerIsDeterministic:
         source = inspect.getsource(page_review._agent)
 
         assert '"temperature": 0.0' in source
+
+
+class TestAlnumTokenGuard:
+    """format_math()'s per-span guard: same letters/digits/Greek names, or reject."""
+
+    def test_a_flattened_fraction_matches_its_latex(self) -> None:
+        from twomarkdown.agents.page_review import _alnum_tokens, _latex_alnum_tokens
+
+        original = _alnum_tokens("s2 1 n1")
+        latex = _latex_alnum_tokens(r"\frac{s_1^2}{n_1}")
+
+        assert sorted(original) == sorted(latex)
+
+    def test_greek_and_overbar_survive_the_round_trip(self) -> None:
+        from twomarkdown.agents.page_review import _alnum_tokens, _latex_alnum_tokens
+
+        original = _alnum_tokens("¯x −µ0 σ/√n")
+        latex = _latex_alnum_tokens(r"\frac{\bar{x} - \mu_0}{\sigma/\sqrt{n}}")
+
+        assert sorted(original) == sorted(latex)
+
+    def test_a_dropped_quantity_does_not_match(self) -> None:
+        from twomarkdown.agents.page_review import _alnum_tokens, _latex_alnum_tokens
+
+        original = _alnum_tokens("s2 1 n1")
+        latex = _latex_alnum_tokens(r"\frac{s^2}{n}")  # the "1" subscript is gone
+
+        assert sorted(original) != sorted(latex)
+
+    def test_operator_name_command_still_counts_as_its_word(self) -> None:
+        """A spelled-out word like "min" must survive \\min, not just \\mu/\\frac.
+
+        Before this guard unwrapped operator-name commands, `\\min{...}` was
+        stripped outright by `_LATEX_COMMAND_STRIP_RE` (same as a purely
+        notational command like `\\frac`), so the plain span's "min" token had
+        nothing to match on the LaTeX side and a correct rewrite was rejected.
+        """
+        from twomarkdown.agents.page_review import _alnum_tokens, _latex_alnum_tokens
+
+        original = _alnum_tokens("min{n1 −1, n2 −1}")
+        latex = _latex_alnum_tokens(r"\min\{n_1 - 1, n_2 - 1\}")
+
+        assert sorted(original) == sorted(latex)
+
+    def test_operator_name_word_is_still_required(self) -> None:
+        """The fix does not loosen the guard — dropping "min" must still fail."""
+        from twomarkdown.agents.page_review import _alnum_tokens, _latex_alnum_tokens
+
+        original = _alnum_tokens("min{n1 −1, n2 −1}")
+        latex = _latex_alnum_tokens(r"\{n_1 - 1, n_2 - 1\}")  # \min silently dropped
+
+        assert sorted(original) != sorted(latex)
+
+
+class TestFormatMath:
+    """format_math() — same 'no change, never worse' contract as review_page()."""
+
+    def test_disabled_returns_the_page_unchanged(self, monkeypatch) -> None:
+        from twomarkdown.agents.page_review import format_math
+        from twomarkdown.config import llm_config
+        from twomarkdown.converter.math_density import MathSpan
+
+        monkeypatch.setattr(llm_config, "review_model", "")
+        text = "z = ¯x −µ0 σ/√n"
+
+        assert format_math(text, [MathSpan(0, len(text), text)]) == (text, [])
+
+    def test_no_spans_means_no_call(self, monkeypatch) -> None:
+        from twomarkdown.agents import page_review
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "llm_enabled", True)
+        monkeypatch.setattr(llm_config, "review_model", "openai:gpt-4o-mini")
+        called: list[int] = []
+        monkeypatch.setattr(page_review, "_math_agent", lambda: called.append(1))
+
+        assert page_review.format_math("some text", []) == ("some text", [])
+        assert called == []
+
+    def _stub(self, monkeypatch, rewrites: dict[int, str]):
+        import twomarkdown.agents.image_ocr as image_ocr
+        from twomarkdown.agents import page_review
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "llm_enabled", True)
+        monkeypatch.setattr(llm_config, "review_model", "openai:gpt-4o-mini")
+
+        class _Result:
+            output = page_review.MathFormatOutput(
+                spans=[
+                    page_review.MathSpanRewrite(index=i, latex=latex)
+                    for i, latex in rewrites.items()
+                ]
+            )
+
+        monkeypatch.setattr(page_review, "_math_agent", lambda: object())
+        monkeypatch.setattr(
+            image_ocr, "_call_with_backoff", lambda run, **kw: _Result()
+        )
+
+    def test_a_valid_rewrite_is_spliced_in(self, monkeypatch) -> None:
+        from twomarkdown.agents.page_review import format_math
+        from twomarkdown.converter.math_density import MathSpan
+
+        text = "Estadístico z: z = ¯x −µ0 σ/√n fin."
+        span_text = "z = ¯x −µ0 σ/√n"
+        start = text.index(span_text)
+        span = MathSpan(start, start + len(span_text), span_text)
+        latex = r"$z = \frac{\bar{x} - \mu_0}{\sigma/\sqrt{n}}$"
+        self._stub(monkeypatch, {0: latex})
+
+        new_text, changes = format_math(text, [span])
+
+        assert latex in new_text
+        assert span_text not in new_text
+        assert len(changes) == 1
+        assert "fin." in new_text  # surrounding text untouched
+
+    def test_a_rewrite_that_drops_a_symbol_is_rejected(self, monkeypatch) -> None:
+        from twomarkdown.agents.page_review import format_math
+        from twomarkdown.converter.math_density import MathSpan
+
+        text = "k = min{n1 −1, n2 −1}"
+        span = MathSpan(0, len(text), text)
+        # Drops the "1"/"2" subscripts entirely: must not be accepted.
+        self._stub(monkeypatch, {0: r"$k = \min\{n - 1\}$"})
+
+        new_text, changes = format_math(text, [span])
+
+        assert changes == []
+        assert span.text in new_text
+        assert "<!-- revisar: fórmula -->" in new_text
+
+    def test_a_skipped_index_is_marked_for_review(self, monkeypatch) -> None:
+        from twomarkdown.agents.page_review import format_math
+        from twomarkdown.converter.math_density import MathSpan
+
+        text = "s2 1 n1"
+        span = MathSpan(0, len(text), text)
+        self._stub(monkeypatch, {})  # model returned nothing for this span
+
+        new_text, changes = format_math(text, [span])
+
+        assert changes == []
+        assert "<!-- revisar: fórmula -->" in new_text
+
+    def test_a_failing_agent_does_not_lose_the_text(self, monkeypatch) -> None:
+        from twomarkdown.agents import page_review
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "llm_enabled", True)
+        monkeypatch.setattr(llm_config, "review_model", "openai:gpt-4o-mini")
+        monkeypatch.setattr(
+            page_review,
+            "_math_agent",
+            lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        from twomarkdown.converter.math_density import MathSpan
+
+        text = "s2 1 n1"
+        span = MathSpan(0, len(text), text)
+
+        assert page_review.format_math(text, [span]) == (text, [])

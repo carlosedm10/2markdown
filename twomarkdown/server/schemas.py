@@ -156,6 +156,10 @@ class InspectFile(BaseModel):
     kind: FileKind
     pages: int = 0
     scanned_pages: int = 0
+    # Native (non-scanned) pages math-dense enough (converter/math_density.py)
+    # to get a format_math() pass instead of vision OCR — counted separately
+    # from scanned_pages because they cost a review-stage pass, not an OCR one.
+    math_pages: int = 0
     figures: int = 0
     text_chars: int = 0
     bytes: int = 0
@@ -165,6 +169,7 @@ class InspectTotals(BaseModel):
     files: int = 0
     pages: int = 0
     scanned_pages: int = 0
+    math_pages: int = 0
     figures: int = 0
     bytes: int = 0
 
@@ -516,6 +521,12 @@ class EventFileDone(BaseModel):
     status: FileStatus
     seconds: float
     reason: str | None = None
+    # True when some page's native text had a fraction/root flattened by PDF
+    # extraction (converter/math_density.py's `structure_lost`) and was
+    # routed to format_math() instead of vision OCR — the frontmatter's own
+    # `math_structure_lost_pages` names which pages; the app can offer
+    # "releer con visión" for this file without reading it off disk.
+    math_structure_lost: bool = False
 
 
 class SemaphoreHolder(BaseModel):

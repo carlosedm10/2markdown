@@ -77,6 +77,8 @@ def should_fallback(
         return False
     if suffix.lower() != ".pdf":
         return False
+    if pdf_ocr_config.pdf_ocr_force:
+        return True
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
     if pdf_path is not None or doc is not None:
         path = pdf_path if pdf_path is not None else Path(".")
@@ -160,7 +162,8 @@ def extract_pages(
             page = opened[i]
             page_text = page.get_text().strip()
             scrambled = is_scrambled_text(page_text)
-            if len(page_text) >= min_chars and not scrambled:
+            has_enough_native = len(page_text) >= min_chars and not scrambled
+            if has_enough_native and not pdf_ocr_config.pdf_ocr_force:
                 continue
 
             page_num = i + 1
@@ -372,6 +375,40 @@ def merge(markdown: str, pages: list[tuple[int, str]]) -> str:
     return ocr_body
 
 
+def _maybe_format_math(native: str, page_num: int) -> str:
+    """Text-only LaTeX formatting for a math-dense *native* page.
+
+    A page whose text layer came straight from the PDF (not vision OCR) never
+    goes near a vision model, so a LaTeX-generated handout's formulas arrive
+    as raw glyph soup: "z = ¯x −µ0 σ/√n". `converter/math_density.py` finds
+    the spans deterministically; above `math_format_min_density` and with a
+    reviewer configured, `agents.page_review.format_math` gives the same
+    blind text-only reviewer a second, separate task — rewrite those spans as
+    LaTeX — with its own per-span guard, entirely apart from the errata pass
+    in `review_page()`. Falls through to the untouched text on any failure,
+    same as every other pass here.
+    """
+    from twomarkdown.converter import math_density
+
+    stats = math_density.analyze(native)
+    if stats.math_density < pdf_ocr_config.math_format_min_density:
+        return native
+
+    from twomarkdown.agents.page_review import format_math, review_enabled
+
+    if not review_enabled():
+        return native
+
+    if stats.structure_lost:
+        from twomarkdown.converter import ocr as ocr_mod
+
+        ocr_mod.record_math_structure_lost_page(page_num)
+
+    with events.stage("review", page=page_num), span("pdf.math_format", page=page_num):
+        formatted, _changes = format_math(native, stats.spans)
+    return formatted
+
+
 def compose_pdf_markdown(
     *,
     pdf_path: Path,
@@ -399,6 +436,10 @@ def compose_pdf_markdown(
             # page; keeping both would leave the garbage above the good version.
             if native and page_num in ocr_map and is_scrambled_text(native):
                 native = ""
+            # Only a page whose text came from the PDF itself, not vision OCR —
+            # an OCR'd page already went through the model and review_page().
+            if native and page_num not in ocr_map:
+                native = _maybe_format_math(native, page_num)
             if native:
                 chunks.append(native)
                 native_concat.append(native)

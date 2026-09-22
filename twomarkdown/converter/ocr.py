@@ -36,6 +36,7 @@ def begin_engine_record() -> None:
     """Start recording which OCR engine answers, for one file."""
     _engines.fallback_pages = []
     _engines.soft_failure = None
+    _engines.math_structure_lost_pages = []
 
 
 def record_engine_fallback() -> None:
@@ -48,6 +49,24 @@ def record_engine_fallback() -> None:
 def engine_fallback_count() -> int:
     """How many pages fell back since `begin_engine_record`."""
     return len(getattr(_engines, "fallback_pages", None) or ())
+
+
+def record_math_structure_lost_page(page: int) -> None:
+    """Note that a native-text page had a fraction/root flattened by extraction.
+
+    Set by `converter/pdf_ocr.py`'s `compose_pdf_markdown` when
+    `converter/math_density.analyze()` flags `structure_lost` on a page routed
+    to `agents.page_review.format_math` instead of vision OCR — the desktop
+    app can offer "releer con visión" for exactly these pages.
+    """
+    pages = getattr(_engines, "math_structure_lost_pages", None)
+    if pages is not None and page not in pages:
+        pages.append(page)
+
+
+def math_structure_lost_pages() -> list[int]:
+    """Pages `record_math_structure_lost_page` recorded since `begin_engine_record`."""
+    return list(getattr(_engines, "math_structure_lost_pages", None) or ())
 
 
 def record_soft_failure(reason: str) -> None:

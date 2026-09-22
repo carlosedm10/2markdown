@@ -22,13 +22,15 @@ import difflib
 import logging
 import re
 import threading
+from collections import Counter
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, PromptedOutput
 from pydantic_ai.exceptions import ModelAPIError
 
 from twomarkdown.config import llm_config
-from twomarkdown.prompts import PAGE_REVIEW_PROMPT
+from twomarkdown.converter.math_density import MathSpan
+from twomarkdown.prompts import MATH_FORMAT_PROMPT, PAGE_REVIEW_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -254,3 +256,229 @@ def review_page(
         return transcription, []
 
     return reviewed, describe_changes(transcription, reviewed)
+
+
+# ---------------------------------------------------------------------------
+# format_math() — a second, separate task for the same text-only reviewer:
+# rewrite math-like spans (converter/math_density.py) as LaTeX. Kept apart
+# from review_page()/PageReview above because the two tasks have unrelated
+# contracts: proofreading may only edit characters and is checked by
+# character-level similarity; formatting may rewrite a span's *notation*
+# wholesale (bare symbols -> \frac{...}{...}) and is checked by a completely
+# different guard — same multiset of letters/digits/Greek names in and out.
+# ---------------------------------------------------------------------------
+
+
+class MathSpanRewrite(BaseModel):
+    index: int
+    latex: str = Field(description="The span rewritten as LaTeX ($...$ or $$...$$).")
+
+
+class MathFormatOutput(BaseModel):
+    """One rewrite per span the model could confidently format."""
+
+    spans: list[MathSpanRewrite] = Field(default_factory=list)
+
+
+def _math_agent() -> Agent[None, MathFormatOutput]:
+    """Math-formatting reviewer for the calling thread. Same model, own prompt."""
+    agent = getattr(_local, "math_agent", None)
+    if agent is None:
+        from pydantic_ai.models import infer_model
+
+        from twomarkdown.agents.image_ocr import _provider_factory, normalize_model_id
+
+        agent = Agent(
+            model=infer_model(
+                normalize_model_id(llm_config.review_model),
+                provider_factory=_provider_factory,
+            ),
+            system_prompt=MATH_FORMAT_PROMPT.strip(),
+            output_type=PromptedOutput(MathFormatOutput),
+            model_settings={"temperature": 0.0, "max_tokens": 4096},
+        )
+        _local.math_agent = agent
+    return agent
+
+
+_GREEK_UNICODE_TO_NAME = {
+    "µ": "mu",
+    "μ": "mu",
+    "σ": "sigma",
+    "Σ": "sigma",
+    "α": "alpha",
+    "β": "beta",
+    "λ": "lambda",
+    "π": "pi",
+    "θ": "theta",
+    "φ": "phi",
+    "δ": "delta",
+    "ε": "epsilon",
+    "γ": "gamma",
+    "Ω": "omega",
+    "ω": "omega",
+    "τ": "tau",
+    "ρ": "rho",
+    "ν": "nu",
+    "χ": "chi",
+    "ψ": "psi",
+    "ξ": "xi",
+    "ζ": "zeta",
+    "η": "eta",
+    "κ": "kappa",
+    "ι": "iota",
+    "υ": "upsilon",
+}
+_GREEK_COMMAND_TO_NAME = {
+    f"\\{name}": name for name in sorted(set(_GREEK_UNICODE_TO_NAME.values()))
+}
+_SUBSUP_TO_DIGIT = {
+    "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+    "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+    "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+    "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+}  # fmt: skip
+_ALNUM_TOKEN_RE = re.compile(r"[A-Za-z]+|\d+")
+_LATEX_COMMAND_STRIP_RE = re.compile(r"\\[a-zA-Z]+")
+# Operator-name commands spell out a literal word that is also what the *plain*
+# span reads ("min" on the page becomes "\min" in LaTeX) — unlike a purely
+# notational command such as \frac or \cdot, which has no letter-for-letter
+# counterpart in the unformatted span. Blanket-stripping every "\word" (as
+# `_LATEX_COMMAND_STRIP_RE` does below) silently drops that word from the
+# LaTeX side's multiset while the plain side still counts it, so a span
+# containing "min", "log", "lim"... was rejected even when the rewrite was
+# exactly right. Unwrapped first, so the stripped regex below never sees them.
+_OPERATOR_NAME_COMMANDS = (
+    "arccos", "arcsin", "arctan", "arg", "cos", "cosh", "cot", "csc", "deg",
+    "det", "dim", "exp", "gcd", "hom", "inf", "ker", "lg", "lim", "liminf",
+    "limsup", "ln", "log", "max", "min", "mod", "Pr", "sec", "sin", "sinh",
+    "sup", "tan", "tanh",
+)  # fmt: skip
+_OPERATOR_NAME_RE = re.compile(
+    r"\\(" + "|".join(_OPERATOR_NAME_COMMANDS) + r")\b"
+)
+
+
+def _alnum_tokens(text: str) -> list[str]:
+    """Letters and digits in `text`, Greek symbols spelled out, lowercased.
+
+    Used on both sides of `format_math()`'s guard: the original span (bare
+    Unicode) and the model's LaTeX rewrite (`_latex_alnum_tokens` below) must
+    reduce to the same multiset, or the rewrite is rejected. Letters and
+    digits are separate tokens ("mu0" -> ["mu", "0"]) so a subscript survives
+    the comparison the same way on both sides, whether it arrives as a
+    Unicode digit glued to its base ("µ0") or as LaTeX's "\\mu_0".
+    """
+    for symbol, name in _GREEK_UNICODE_TO_NAME.items():
+        text = text.replace(symbol, f" {name} ")
+    for symbol, digit in _SUBSUP_TO_DIGIT.items():
+        text = text.replace(symbol, digit)
+    return [tok.lower() for tok in _ALNUM_TOKEN_RE.findall(text)]
+
+
+def _latex_alnum_tokens(latex: str) -> list[str]:
+    """Same multiset as `_alnum_tokens`, read out of a LaTeX rewrite instead.
+
+    Greek commands (\\mu, \\sigma, ...) are spelled out the same as their
+    Unicode counterparts; every other command (\\frac, \\sqrt, \\bar,
+    \\operatorname, ...) is structural and is stripped rather than counted.
+    """
+    for command, name in _GREEK_COMMAND_TO_NAME.items():
+        latex = latex.replace(command, f" {name} ")
+    latex = _OPERATOR_NAME_RE.sub(r" \1 ", latex)
+    latex = _LATEX_COMMAND_STRIP_RE.sub(" ", latex)
+    return [tok.lower() for tok in _ALNUM_TOKEN_RE.findall(latex)]
+
+
+def _math_request(page_text: str, spans: list[MathSpan]) -> str:
+    lines = [
+        f"Full page text for context:\n\n{page_text}",
+        "",
+        "Spans to rewrite as LaTeX (index: original text):",
+    ]
+    for i, sp in enumerate(spans):
+        lines.append(f"{i}: {sp.text!r}")
+    return "\n".join(lines)
+
+
+def format_math(
+    page_text: str, spans: list[MathSpan], *, model: str | None = None
+) -> tuple[str, list[str]]:
+    """Rewrite `spans` of `page_text` as LaTeX, guarded per-span.
+
+    Every accepted rewrite keeps the exact same multiset of letters, digits
+    and Greek names as the span it replaces (`_alnum_tokens` vs.
+    `_latex_alnum_tokens`) — nothing added, nothing dropped, only re-typeset.
+    A span the model skipped, or whose rewrite fails that guard, is left as
+    written with an `<!-- revisar: fórmula -->` marker appended after it, so
+    a reader (or the desktop app) can find what still needs a human look.
+
+    Falls back to `(page_text, [])` whenever the reviewer is disabled, there
+    is nothing to format, or the call itself fails — same "no change, never
+    worse" contract as `review_page()`.
+    """
+    if not review_enabled() or not spans or not page_text.strip():
+        return page_text, []
+
+    from twomarkdown.agents.image_ocr import (
+        _call_with_backoff,
+        _is_out_of_quota,
+        _page_ocr_lock,
+        _remote_lock,
+        is_local_model,
+    )
+    from twomarkdown.batch import events
+
+    name = model or llm_config.review_model
+    permit = _page_ocr_lock if is_local_model(name) else _remote_lock
+    try:
+        with events.stage("math_format"), permit:
+            result = _call_with_backoff(
+                lambda: _math_agent().run_sync(_math_request(page_text, spans)),
+                what="Math format",
+                model=name,
+            )
+    except ModelAPIError as exc:
+        logger.warning("Math format API error: %s", exc)
+        if not is_local_model(name) and _is_out_of_quota(exc):
+            from twomarkdown.converter import ocr as ocr_mod
+
+            message = f"Formateo de matemáticas omitido: saldo agotado en {name}"
+            ocr_mod.record_soft_failure(message)
+            events.log("warning", message)
+        return page_text, []
+    except Exception as exc:
+        logger.warning("Math format failed: %s", exc)
+        return page_text, []
+
+    from twomarkdown.agents.image_ocr import _report_cloud_cost
+
+    _report_cloud_cost(name, result)
+
+    rewrites = {r.index: r.latex for r in result.output.spans}
+    accepted = 0
+    rejected = 0
+    changes: list[str] = []
+    text = page_text
+    # Right to left, so accepting or marking an earlier span never shifts the
+    # offsets of one not yet applied.
+    for i, span in sorted(enumerate(spans), key=lambda p: p[1].start, reverse=True):
+        latex = rewrites.get(i)
+        # Multiset equality, not order-sensitive: "nothing added, nothing
+        # dropped" is what the guard means, not "in the same order".
+        ok = bool(latex) and Counter(_alnum_tokens(span.text)) == Counter(
+            _latex_alnum_tokens(latex or "")
+        )
+        if ok:
+            text = text[: span.start] + latex + text[span.end :]
+            accepted += 1
+            changes.append(f"{span.text[:60]!r} -> {latex[:60]!r}")
+        else:
+            marker = " <!-- revisar: fórmula -->"
+            text = text[: span.end] + marker + text[span.end :]
+            rejected += 1
+
+    events.log(
+        "info", f"Math format: {accepted} span(s) formatted, {rejected} left as-is"
+    )
+    return text, changes

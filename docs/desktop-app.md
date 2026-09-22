@@ -674,3 +674,111 @@ The three built-in presets, as shipped in
   `twomarkdown/agents/{image_ocr,page_review}.py`.
 - Visual/behavioural spec — `docs/mockups/desktop-v4.html`.
 - Product taxonomy and engine decisions — `docs/README.md`.
+
+## Measured — native-text math formatting vs. vision OCR
+
+A native (non-scanned) PDF's text layer currently skips vision OCR
+entirely — it already has "enough" characters — but for a LaTeX-generated
+handout that text is raw glyph soup: "z = ¯x −µ0 σ/√n" instead of a
+rendered formula. `converter/math_density.py` detects this deterministically
+and, above `pdf_ocr_config.math_format_min_density`, routes the page to a
+second, separate task for the existing text-only reviewer
+(`agents/page_review.py`'s `format_math()`) instead of vision OCR.
+
+This measurement redoes an earlier one on a real LaTeX PDF: page 1 of
+`Formulario Métodos Estadísticos en Economía (ADE)` (producer `pdfTeX-1.40.19`,
+confirmed with `fitz.Document.metadata`), copied out of iCloud with PyMuPDF
+(`insert_pdf(from_page=0, to_page=0)`) to
+`~/ocr-lab/ux-lab/math/formulario-p1.pdf`. `converter/math_density.analyze()`
+measures `math_density=0.35` and `structure_lost=True` on its 19 detected
+spans — well above `pdf_ocr_config.math_format_min_density` (0.08), so
+`format_math()` fires automatically. The page has 7 displayed formulas; the
+table below counts against those 7.
+
+Converted the same page three ways with `uv run python -m twomarkdown.cli`
+(the documented host exception, Ollama on `localhost:11434`; OpenAI is out
+of credit so no cloud reviewer was tried):
+
+- (a) `--no-ocr --no-describe-figures` — native text, no reviewer.
+- (b) `--no-ocr --no-describe-figures --llm-enabled --review-model ollama:qwen2.5:14b`
+  — native text; `format_math()` triggers on its own (no separate flag) once
+  density clears the threshold and a `review_model` is configured.
+- (c) `--ocr --ocr-backend ollama --force-ocr --no-describe-figures` with
+  `.ocr-mode`'s `vision_model` set to `ollama:qwen2.5vl:7b` — every page is
+  vision-OCR'd even though it already has a native text layer. There was no
+  flag for this ("releer con visión" in the mockup); added one — see
+  "Fix: force-OCR flag" below.
+
+| Pipeline | Model | Formulas in source | Valid LaTeX, correct structure | Valid LaTeX, wrong structure | Left as plain text / flagged | Hallucinated | Time |
+|---|---|---|---|---|---|---|---|
+| (a) Native text, review off | — | 7 | 0 | 0 | 7 (bare Unicode, untouched) | 0 | 2.8s |
+| (b) Native text + `format_math` | `ollama:qwen2.5:14b` | 7 | 0 (one sub-fragment, `s_1^2/n_1+s_2^2/n_2`, formatted correctly inside an otherwise-plain formula) | 1 (`z^{\alpha/2}` typeset as `z_{\alpha/2}` — a subscript for the source's superscript) | 6, each closed with `<!-- revisar: fórmula -->` | 0 | 37.5s |
+| (c) Vision OCR, forced | `ollama:qwen2.5vl:7b` | 7 | 7 | 0 | 0 | 0 | 51.8s |
+
+The honest read: on a real LaTeX PDF, forced vision OCR is not merely
+better than the native-text math pass, it is categorically better —
+every formula, fraction bar, square root and sub/superscript rendered
+correctly, because the model reads the page's actual two-dimensional
+typesetting rather than the one-line text extraction PyMuPDF hands the
+text-only reviewer. (b)'s per-span guard
+(`agents/page_review.py`'s `_alnum_tokens`/`_latex_alnum_tokens` multiset
+check) still did its job — it never shipped a wrong quantity, and the one
+span it accepted outside its guard's blind spot (the fraction sub-span) was
+correct — but most of its 19 detected spans are fragments that omit an
+adjacent bare-letter identifier (`k`, `N`, a leading `t`/`z`) that
+`math_density.find_math_spans()` never promotes to a candidate token
+(`_BARE_ALNUM_RE` requires a trailing digit), so the model's necessarily
+fuller, page-aware rewrite adds a symbol the guard correctly refuses.
+That is a span-*detection* gap in `math_density.py`, not a guard bug, and
+is out of scope for this pass — fixed here only for the guard's own,
+narrower defect (see below). `math_structure_lost_pages: [1]` and
+`EventFileDone.math_structure_lost` fired correctly for run (b)'s page.
+
+### Fix: `format_math()` guard rejected correct operator-name rewrites
+
+`_latex_alnum_tokens()` (`twomarkdown/agents/page_review.py`) stripped every
+`\command` as pure notation before counting letters, but an operator name
+like `\min` spells the same word ("min") that the plain span already counts
+as content — so a perfectly correct `min{n1 −1, n2 −1}` → `\min\{n_1 - 1,
+n_2 - 1\}` rewrite always lost that "min" from the LaTeX side's multiset and
+was rejected. Fixed by unwrapping a fixed list of operator-name commands
+(`\min`, `\max`, `\log`, `\lim`, `\sin`, ... — `twomarkdown/agents/page_review.py:351-359`)
+into their bare word before the generic command-strip regex runs
+(`twomarkdown/agents/page_review.py:388`), so `_latex_alnum_tokens` keeps
+"min" the same way `_alnum_tokens` always did. The guard is not loosened:
+dropping the `\min` still fails the multiset check (see
+`test_operator_name_word_is_still_required`,
+`tests/test_agents_page_review.py`). This did not change run (b)'s output
+above — the `min{...}` span is still guard-rejected, but now for the real
+reason (a missing `k`, not a spurious "min" mismatch); see
+`test_operator_name_command_still_counts_as_its_word` for the isolated case
+where the fix does flip the guard's verdict.
+
+### Fix: `--force-ocr` flag ("releer con visión")
+
+There was no way to force vision OCR on a PDF page that already clears
+`pdf_ocr_min_chars`, which run (c) above needs and which the desktop
+mockup's "releer con visión" button will need too. Added:
+- `pdf_ocr_config.pdf_ocr_force: bool = False` — `twomarkdown/config.py:189-194`.
+- `--force-ocr/--no-force-ocr` CLI flag, wired to that config —
+  `twomarkdown/cli.py:99-108` and `twomarkdown/cli.py:227`.
+- `pdf_ocr.should_fallback()` returns `True` unconditionally for a `.pdf`
+  when the flag is set — `twomarkdown/converter/pdf_ocr.py:80-81`.
+- `pdf_ocr.extract_pages()`'s per-page skip (`len(page_text) >= min_chars and
+  not scrambled`) is bypassed the same way — `twomarkdown/converter/pdf_ocr.py:162-166`.
+
+Tests: `test_should_fallback_true_when_forced_despite_digital_pdf` and
+`test_extract_pages_forces_ocr_on_digital_pages`
+(`tests/test_converter_pdf_ocr.py`).
+
+### Footnote — the earlier "Measured" run was invalid
+
+An earlier pass measured this same comparison on a synthetic one-page PDF
+built with PyMuPDF (`Arial Unicode.ttf`) because no real "Formulario"
+PDF could be found on disk at the time. That fixture's formulas were
+inserted as flat, single-line text — not real LaTeX typesetting with
+stacked fraction bars, radicals and sub/superscripts — so its *rendered
+page image* looked like glyph soup too. The vision-OCR row measured on it
+(2/7 correct, 5/7 wrong structure) reflected the model reading a bad
+synthetic rendering, not vision OCR's actual behaviour on typeset LaTeX;
+it is superseded by run (c) above, measured on the real PDF.

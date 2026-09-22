@@ -104,6 +104,35 @@ class TestPdfOcrFallback:
         ocr_fn.assert_not_called()
         assert pages == []
 
+    def test_should_fallback_true_when_forced_despite_digital_pdf(
+        self, tmp_path: Path
+    ) -> None:
+        """should_fallback() — pdf_ocr_force overrides a fully digital PDF."""
+        digital = _make_pdf(tmp_path / "digital.pdf", [LONG_TEXT])
+        with patch.object(pdf_ocr_config, "pdf_ocr_force", True):
+            assert (
+                pdf_ocr.should_fallback(
+                    LONG_TEXT,
+                    suffix=".pdf",
+                    pdf_path=digital,
+                )
+                is True
+            )
+
+    def test_extract_pages_forces_ocr_on_digital_pages(self, tmp_path: Path) -> None:
+        """extract_pages() — pdf_ocr_force re-OCRs pages with native text too."""
+        digital = _make_pdf(tmp_path / "digital.pdf", [LONG_TEXT])
+        ocr_fn = MagicMock(return_value="VISION-P1")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", False),
+            patch.object(pdf_ocr_config, "pdf_ocr_force", True),
+        ):
+            pages = pdf_ocr.extract_pages(digital, ocr_fn=ocr_fn)
+
+        ocr_fn.assert_called_once()
+        assert pages == [(1, "VISION-P1")]
+
     def test_extract_pages_ocrs_all_empty_pages(self, tmp_path: Path) -> None:
         """extract_pages() — OCR every page when none have native text."""
         empty = _make_pdf(tmp_path / "empty.pdf", ["", ""])

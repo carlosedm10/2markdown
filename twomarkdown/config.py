@@ -179,6 +179,19 @@ class PdfOcrConfig(BaseModel):
     # ("Eval", "uaci", "ón"); a real word like "Operaciones" is never a fragment,
     # so this stops dense maths pages collapsing into "Operacionesconmatrices".
     pdf_fragment_max_piece: int = 5
+    # A page whose *native* text layer (LaTeX-generated PDFs, mostly) is this
+    # math-dense — see converter/math_density.py — gets a second, text-only
+    # reviewer pass ("formatear matemáticas": agents/page_review.py's
+    # format_math()) instead of being routed to vision OCR, which native-text
+    # pages never are. 0.08 sits below the sample "Formulario" page's measured
+    # density (which runs well above it) and above ordinary prose (0.0).
+    math_format_min_density: float = 0.08
+    # "Releer con visión" — force vision OCR on every page of a PDF even though
+    # its native text layer already clears pdf_ocr_min_chars. Off by default:
+    # normal batches should never pay for a full re-read of digital pages. Set
+    # via --force-ocr (twomarkdown/cli.py); has no effect unless pdf_ocr_enabled
+    # is also on, same as every other pdf_ocr_* setting here.
+    pdf_ocr_force: bool = False
 
 
 class FigureConfig(BaseModel):

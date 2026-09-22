@@ -816,6 +816,7 @@ def _convert_one(
             body,
             source_rel=source_rel,
             ocr_fallback_pages=ocr.engine_fallback_count(),
+            math_structure_lost_pages=ocr.math_structure_lost_pages(),
         )
         + body
     )
@@ -1058,7 +1059,11 @@ def process_batch(
                 status = "warn" if soft_reason else "ok"
                 if job_index is not None:
                     events.end_file(
-                        job_index, status, duration_ms / 1000.0, reason=soft_reason
+                        job_index,
+                        status,
+                        duration_ms / 1000.0,
+                        reason=soft_reason,
+                        math_structure_lost=bool(ocr.math_structure_lost_pages()),
                     )
                 return source_path, status, duration_ms, chars, soft_reason
             except Exception as exc:

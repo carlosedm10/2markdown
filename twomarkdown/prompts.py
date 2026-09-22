@@ -132,3 +132,34 @@ Return JSON with exactly two fields:
 
 Never list a change you did not make.
 """
+
+MATH_FORMAT_PROMPT = r"""
+You format mathematics that was flattened to bare Unicode symbols during PDF
+text extraction back into LaTeX. You do not have the page — only the raw
+text, a numbered list of the spans inside it that need this, and this task.
+
+Each span is a formula that lost its typesetting: fraction bars, square-root
+brackets, sub/superscripts and overlines were all stripped, leaving symbols
+sitting next to each other on one line, e.g. "z = ¯x −µ0 σ/√n" is
+z = (x̄ − μ₀) / (σ/√n), and "s2 1 n1" is s₁² / n₁ — the numerator and
+denominator of a fraction, read left to right with no bar between them.
+
+For every span given, return its LaTeX rewrite:
+- Wrap it in $...$ for an inline formula, or $$...$$ only if the span is
+  clearly its own displayed line (not inline in a sentence).
+- Use \frac, \sqrt, \bar, subscripts with _, superscripts with ^, and the
+  named commands for Greek letters (\mu, \sigma, \alpha, \beta, \lambda, ...).
+- Every letter, digit and Greek letter in the span must appear exactly once
+  in your rewrite, under its own name — you are re-typesetting, not solving,
+  simplifying, or adding a value that was not written. "s2 1 n1" becomes
+  \frac{s_1^2}{n_1}, never \frac{s^2}{n} with the 1's dropped, and never a
+  simplified or "corrected" version of the formula.
+- Do not touch anything outside the span. Do not add words, units, or
+  commentary. Do not guess at a symbol the span does not contain.
+- If a span cannot be resolved into a formula that keeps every symbol it had,
+  leave it out of your answer rather than guess.
+
+Return JSON with one field, "spans": a list of {"index": <the span's number>,
+"latex": <its rewrite>}, one entry per span you could confidently rewrite.
+Skip an index entirely rather than return a wrong or partial rewrite for it.
+"""

@@ -275,6 +275,7 @@ def _inspect_pdf(path: Path, size: int) -> InspectFile:
     text, or a scrambled text layer) rather than re-deriving it, so this module
     can never drift from what the converter will actually decide to OCR.
     """
+    from twomarkdown.converter import math_density
     from twomarkdown.converter.figures import detect_figure_regions
     from twomarkdown.converter.pdf_ocr import is_scrambled_text
 
@@ -284,7 +285,8 @@ def _inspect_pdf(path: Path, size: int) -> InspectFile:
         return InspectFile(path=str(path), kind="other", bytes=size)
 
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
-    scanned = figures = text_chars = 0
+    min_density = pdf_ocr_config.math_format_min_density
+    scanned = figures = text_chars = math_pages = 0
     try:
         for page in doc:
             try:
@@ -292,8 +294,13 @@ def _inspect_pdf(path: Path, size: int) -> InspectFile:
             except Exception:
                 text = ""
             text_chars += len(text)
-            if len(text) < min_chars or is_scrambled_text(text):
+            page_scanned = len(text) < min_chars or is_scrambled_text(text)
+            if page_scanned:
                 scanned += 1
+            # A page that will get vision OCR never gets format_math() too
+            # (see pdf_ocr.compose_pdf_markdown); only count the other kind.
+            elif math_density.math_density(text) >= min_density:
+                math_pages += 1
             if figure_config.figures_enabled:
                 try:
                     figures += len(detect_figure_regions(page))
@@ -309,6 +316,7 @@ def _inspect_pdf(path: Path, size: int) -> InspectFile:
         kind=kind,
         pages=pages,
         scanned_pages=scanned,
+        math_pages=math_pages,
         figures=figures,
         text_chars=text_chars,
         bytes=size,
@@ -350,6 +358,7 @@ def inspect(path: str | Path) -> InspectResponse:
         files=len(inspected),
         pages=sum(f.pages for f in inspected),
         scanned_pages=sum(f.scanned_pages for f in inspected),
+        math_pages=sum(f.math_pages for f in inspected),
         figures=sum(f.figures for f in inspected),
         bytes=sum(f.bytes for f in inspected),
     )
@@ -1042,7 +1051,10 @@ def estimate(
             enabled=pipeline.describe_figures,
             note=figure_note,
         ),
-        _review_stage(review_model, totals.scanned_pages),
+        # The reviewer also runs format_math() over math-dense native pages
+        # (pdf_ocr.compose_pdf_markdown), not only the errata pass over
+        # OCR'd pages — both cost a review-stage call, so both count here.
+        _review_stage(review_model, totals.scanned_pages + totals.math_pages),
         _write_stage(totals.pages),
     ]
 
@@ -1091,7 +1103,9 @@ def estimate(
     )
 
 
-_ZERO_TOTALS = InspectTotals(files=0, pages=0, scanned_pages=0, figures=0, bytes=0)
+_ZERO_TOTALS = InspectTotals(
+    files=0, pages=0, scanned_pages=0, math_pages=0, figures=0, bytes=0
+)
 
 
 def estimate_pipeline_only(pipeline: Pipeline) -> EstimateResponse:

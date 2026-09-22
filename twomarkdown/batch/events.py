@@ -131,12 +131,23 @@ def begin_file(index: int, path: Path, *, pages: int = 0) -> None:
 
 
 def end_file(
-    index: int, status: str, seconds: float, *, reason: str | None = None
+    index: int,
+    status: str,
+    seconds: float,
+    *,
+    reason: str | None = None,
+    math_structure_lost: bool = False,
 ) -> None:
     """Report a file finished. `index` is explicit — a timed-out file is
     abandoned from the *scheduling* thread, not the worker that began it, so
     this cannot rely on the calling thread's own context the way `begin_file`
-    sets it."""
+    sets it.
+
+    `math_structure_lost` mirrors the frontmatter's `math_structure_lost_pages`
+    (see `converter/ocr.py`'s `math_structure_lost_pages()`) as one bool, so a
+    live subscriber can offer "releer con visión" without waiting for the file
+    on disk.
+    """
     _bump_active(-1)
     emit(
         {
@@ -145,6 +156,7 @@ def end_file(
             "status": status,
             "seconds": seconds,
             "reason": reason,
+            "math_structure_lost": math_structure_lost,
         }
     )
     ctx = _ctx()

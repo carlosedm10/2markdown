@@ -61,6 +61,7 @@ def build_frontmatter(
     *,
     source_rel: Path | None = None,
     ocr_fallback_pages: int = 0,
+    math_structure_lost_pages: list[int] | None = None,
 ) -> str:
     if source_rel is None:
         try:
@@ -95,6 +96,11 @@ def build_frontmatter(
         # declined fall through to Tesseract, whose confident noise on handwriting
         # is indistinguishable from a transcription unless the file says so.
         ("ocr_fallback_pages", ocr_fallback_pages or None),
+        # Pages whose native text was math-dense enough for format_math() to
+        # run (see converter/math_density.py) and where a fraction/root's
+        # markup was found flattened across tokens — the desktop app can
+        # offer "releer con visión" for exactly these pages.
+        ("math_structure_lost_pages", math_structure_lost_pages or None),
         ("title", title),
         ("page_count", page_count),
         ("language", language),
@@ -104,9 +110,11 @@ def build_frontmatter(
     ]
     lines = ["---"]
     for key, value in fields:
-        if key == "ocr_pages":
+        if key in ("ocr_pages", "math_structure_lost_pages"):
             pages = value if isinstance(value, list) else []
-            lines.append(f"ocr_pages: [{', '.join(str(p) for p in pages)}]")
+            if key == "math_structure_lost_pages" and not pages:
+                continue
+            lines.append(f"{key}: [{', '.join(str(p) for p in pages)}]")
             continue
         if value is None:
             continue
