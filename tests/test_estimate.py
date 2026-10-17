@@ -193,6 +193,90 @@ class TestInspect:
         assert inspect(pdf).inspect_id == inspect(pdf).inspect_id
 
 
+class TestInspectMultiPathSelection:
+    def test_selection_across_two_folders_inspects_all_files(
+        self, tmp_path: Path
+    ) -> None:
+        folder_a = tmp_path / "folder_a"
+        folder_b = tmp_path / "folder_b"
+        folder_a.mkdir()
+        folder_b.mkdir()
+        file_1 = _make_pdf(folder_a / "one.pdf", [LONG_TEXT])
+        file_2 = _make_pdf(folder_a / "two.pdf", [LONG_TEXT, LONG_TEXT])
+        file_3 = _make_pdf(folder_b / "three.pdf", ["", ""])
+
+        result = inspect(paths=[file_1, file_2, file_3])
+
+        assert result.totals.files == 3
+        assert {Path(f.path).name for f in result.files} == {
+            "one.pdf",
+            "two.pdf",
+            "three.pdf",
+        }
+        assert result.multi_root is True
+        assert set(result.paths) == {
+            str(file_1.resolve()),
+            str(file_2.resolve()),
+            str(file_3.resolve()),
+        }
+        # The deepest common ancestor of two sibling folders is their shared
+        # parent, not either folder itself.
+        assert result.root == str(tmp_path.resolve())
+
+    def test_single_entry_selection_matches_plain_inspect(self, tmp_path: Path) -> None:
+        pdf = _make_pdf(tmp_path / "solo.pdf", [LONG_TEXT])
+
+        via_paths = inspect(paths=[pdf])
+        via_path = inspect(pdf)
+
+        assert via_paths.multi_root is False
+        assert via_paths.paths == [str(pdf.resolve())]
+        assert via_paths.root == via_path.root
+        assert via_paths.inspect_id == via_path.inspect_id
+
+    def test_selection_is_deduped_and_stably_sorted(self, tmp_path: Path) -> None:
+        file_1 = _make_pdf(tmp_path / "a.pdf", [LONG_TEXT])
+        file_2 = _make_pdf(tmp_path / "b.pdf", [LONG_TEXT])
+
+        forward = inspect(paths=[file_1, file_2, file_1])
+        backward = inspect(paths=[file_2, file_1])
+
+        assert forward.totals.files == 2  # the repeated entry was deduped
+        assert [Path(f.path).name for f in forward.files] == [
+            Path(f.path).name for f in backward.files
+        ]
+
+    def test_sibling_selection_default_output_names_the_shared_parent(
+        self, tmp_path: Path
+    ) -> None:
+        file_1 = _make_pdf(tmp_path / "a.pdf", [LONG_TEXT])
+        file_2 = _make_pdf(tmp_path / "b.pdf", [LONG_TEXT])
+
+        result = inspect(paths=[file_1, file_2])
+
+        expected = tmp_path.resolve().parent / f"{tmp_path.resolve().name}_2markdown"
+        assert result.default_output == str(expected)
+
+    def test_non_sibling_selection_default_output_falls_back(
+        self, tmp_path: Path
+    ) -> None:
+        folder_a = tmp_path / "folder_a"
+        folder_a.mkdir()
+        nested = folder_a / "nested"
+        nested.mkdir()
+        file_1 = _make_pdf(folder_a / "one.pdf", [LONG_TEXT])
+        file_2 = _make_pdf(nested / "two.pdf", [LONG_TEXT])
+
+        result = inspect(paths=[file_1, file_2])
+
+        assert result.default_output == str(folder_a.resolve() / "2markdown")
+
+    def test_path_and_paths_together_is_rejected(self, tmp_path: Path) -> None:
+        pdf = _make_pdf(tmp_path / "a.pdf", [LONG_TEXT])
+        with pytest.raises(ValueError):
+            inspect(pdf, paths=[pdf])
+
+
 # ---------------------------------------------------------------------------
 # Manual prices
 # ---------------------------------------------------------------------------

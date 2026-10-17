@@ -161,6 +161,12 @@ class PdfOcrConfig(BaseModel):
     # vision model out entirely. Below this mean word confidence, re-OCR with the
     # vision model instead of trusting the result.
     pdf_ocr_llm_min_confidence: float = 75.0
+    # A page Tesseract can barely read as words, but that is covered in ink, is a
+    # figure rather than a short title. 8 sits under the shortest real title page
+    # measured on ocr-lab (13 words). The dark ratio is the share of pixels below
+    # mid-grey after a small downsample.
+    tesseract_graphic_min_words: int = 8
+    tesseract_graphic_dark_ratio: float = 0.12
     # PowerPoint equation objects extract as scrambled token soup with plenty of
     # characters, so the "too few chars" test never fires. Measured on this corpus:
     # readable pages peak at 54% single-character tokens, scrambled ones run 65-86%.
@@ -192,6 +198,9 @@ class PdfOcrConfig(BaseModel):
     # via --force-ocr (twomarkdown/cli.py); has no effect unless pdf_ocr_enabled
     # is also on, same as every other pdf_ocr_* setting here.
     pdf_ocr_force: bool = False
+    # When pdf-inspector marks a printed table page as needing OCR, try Tesseract
+    # before the vision model. Off sends every needs_ocr page to the vision model.
+    table_pages_use_tesseract: bool = True
 
 
 class FigureConfig(BaseModel):

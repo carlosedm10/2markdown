@@ -148,7 +148,12 @@ class SystemInfo(BaseModel):
 
 
 class InspectRequest(BaseModel):
-    path: str
+    # Exactly one of these two: a single file/folder, or a multi-path
+    # SELECTION (several files and/or folders picked together — see
+    # `InspectResponse.multi_root`). `server/app.py` 422s a request that
+    # sends both, or neither.
+    path: str | None = None
+    paths: list[str] | None = None
 
 
 class InspectFile(BaseModel):
@@ -156,6 +161,8 @@ class InspectFile(BaseModel):
     kind: FileKind
     pages: int = 0
     scanned_pages: int = 0
+    # Pages the pdf-inspector router sends to the vision model (excludes Tesseract).
+    vision_ocr_pages: int = 0
     # Native (non-scanned) pages math-dense enough (converter/math_density.py)
     # to get a format_math() pass instead of vision OCR — counted separately
     # from scanned_pages because they cost a review-stage pass, not an OCR one.
@@ -169,6 +176,7 @@ class InspectTotals(BaseModel):
     files: int = 0
     pages: int = 0
     scanned_pages: int = 0
+    vision_ocr_pages: int = 0
     math_pages: int = 0
     figures: int = 0
     bytes: int = 0
@@ -176,12 +184,26 @@ class InspectTotals(BaseModel):
 
 class InspectResponse(BaseModel):
     inspect_id: str
-    # The path the caller gave `/api/inspect` (a single file's own path, or a
-    # directory's own path when it was walked) — the root `server/jobs.py`
-    # re-resolves into `files` when `POST /api/jobs` is given `inspect_id`
-    # alone, with no `path`. NEEDS a mirror field in app/src/api/types.ts's
+    # The single path the caller gave `/api/inspect` (a file's own path, or a
+    # directory's own path when it was walked), OR — for a multi-path
+    # selection (`InspectRequest.paths`) — the deepest common ancestor
+    # DIRECTORY of every requested entry (`twomarkdown.paths.common_ancestor`),
+    # used to derive `default_output`'s name and as the mirroring root for
+    # output paths. `server/jobs.py` re-resolves this same root into `files`
+    # when `POST /api/jobs` is given `inspect_id` alone, with no `path`/
+    # `paths` of its own. NEEDS a mirror field in app/src/api/types.ts's
     # `InspectResponse` (see this module's docstring).
     root: str
+    # Every requested root, one entry per `InspectRequest.path`/`paths` item
+    # (in the single-`path` case, this is `[root]`) — so a caller can tell a
+    # multi-path selection's individual entries apart from the one combined
+    # `root` above.
+    paths: list[str] = Field(default_factory=list)
+    # True when this inspection came from more than one requested entry
+    # (`InspectRequest.paths` with 2+ items) — `False` for a single file or a
+    # single walked folder, in which case `root` names that one entry
+    # directly rather than a computed ancestor.
+    multi_root: bool = False
     files: list[InspectFile]
     totals: InspectTotals
     # The preset last used to convert this exact root path (server/
@@ -379,6 +401,13 @@ class EstimateResponse(BaseModel):
 class JobCreateRequest(BaseModel):
     inspect_id: str | None = None
     path: str | None = None
+    # A multi-path SELECTION (several files and/or folders converted
+    # together), as an alternative to `path` — mutually exclusive with it
+    # (`server/app.py` 422s a request sending both). Converts exactly these
+    # entries (files as-is, folders walked) into one output tree, not
+    # whatever whole folder(s) happen to contain them. Mirrors
+    # `InspectRequest.paths`/`InspectResponse.paths`.
+    paths: list[str] | None = None
     # Omitted → `server/settings.py:default_output_for()` resolves it from
     # the persisted `Settings` and the job's input path, the same rule
     # `InspectResponse.default_output` already showed the caller.
@@ -442,6 +471,13 @@ class Job(BaseModel):
     # returns the exact same shape whether the job is still in memory or was
     # loaded back from that file.
     input: str | None = None  # the path this job was created with
+    # The multi-path SELECTION this job was created from (`JobCreateRequest.
+    # paths`), when it was one — `None` for a job created from a single
+    # `path`/`inspect_id`, in which case `input` above already names it.
+    # Kept so a restart can rehydrate the exact same selection's common root
+    # (`server/jobs.py:_rehydrate_runtime`) rather than re-deriving it from
+    # `input` alone, which a multi-selection job never set.
+    paths: list[str] | None = None
     preset_id: str | None = None  # None: an ad-hoc Pipeline, not a saved preset
     started: str | None = None  # ISO 8601
     finished: str | None = None  # ISO 8601; None while still running
@@ -673,6 +709,14 @@ class ManualPriceRequest(BaseModel):
 
 class PickFolderResponse(BaseModel):
     path: str | None
+
+
+class PickPathsRequest(BaseModel):
+    kind: Literal["file", "folder"] = "folder"
+
+
+class PickPathsResponse(BaseModel):
+    paths: list[str]
 
 
 class OllamaPullRequest(BaseModel):

@@ -134,3 +134,48 @@ def discover_files(
 
     files.extend(_discover_iwork_bundles(input_dir, output_dir, extensions=extensions))
     return sorted(files, key=lambda p: str(p))
+
+
+def discover_selection(paths: list[Path], output_dir: Path | None = None) -> list[Path]:
+    """Files to convert for a multi-path SELECTION (several files and/or
+    folders picked together), not one walked directory.
+
+    Each entry is resolved on its own — a file stays exactly itself; a
+    directory is walked with `discover_files` above, same rules (hidden
+    dirs, `SKIP_DIR_NAMES`, iWork bundles, extension filtering) as a
+    single-folder input. `output_dir` excludes a real output tree from a
+    directory entry's own walk, same as `discover_files` always does; when
+    it is not yet known (inspecting a selection before any job exists), a
+    directory entry gets the same synthetic sibling-exclusion
+    `batch.estimate.inspect()` already uses for a lone folder, so nothing in
+    the input tree is ever excluded by accident.
+
+    The combined list is deduped by resolved path (two selected entries
+    that resolve to the same file, or a folder that contains a file also
+    picked directly, only ever appear once) and sorted the same stable way
+    `discover_files` sorts its own results — so the file order for a given
+    selection never depends on the order its entries were listed in.
+    """
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for entry in paths:
+        entry = Path(entry)
+        resolved = entry.resolve()
+        if entry.is_dir():
+            exclude = (
+                output_dir
+                if output_dir is not None
+                else resolved.parent / f".{resolved.name}.inspect-out"
+            )
+            found = discover_files(resolved, exclude)
+        elif entry.is_file():
+            found = [resolved]
+        else:
+            raise FileNotFoundError(str(entry))
+        for f in found:
+            rf = f.resolve()
+            if rf in seen:
+                continue
+            seen.add(rf)
+            files.append(f)
+    return sorted(files, key=lambda p: str(p))

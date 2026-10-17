@@ -21,6 +21,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.48.0",
     "watchfiles>=1.2.0",
+    "pdf-inspector>=1.23.0",
 ]
 
 [project.optional-dependencies]

@@ -1915,6 +1915,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pdf-inspector"
+version = "1.23.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/08/979e1d8d5f99e967389af7a7d33c98dadee57a09f8e6f6eb6a5a5f64f1bc/pdf_inspector-1.23.0.tar.gz", hash = "sha256:40892c0c5141947947a2ce217bb88fd7b7ad6f9f7038909289243277640e5014", size = 2080994, upload-time = "2026-09-22T01:19:50.139Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/fe/b7ca0e3f2a198fe497fd4e3e10e54ae5da316ad26ea746ea316beb83c048/pdf_inspector-1.23.0-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:afc607413993872987723cc1a6c86266d0a90513b30c6e109defd8cb0063c63e", size = 6312437, upload-time = "2026-09-22T01:19:39.378Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/32/74a6d11a163198fd99d9260fc1d9e997d311474029e03d03378302f0e26d/pdf_inspector-1.23.0-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:142e6aa376f7d8f4a8ff7484f94949ae170a48ae664a5e8232bc0bec082908aa", size = 6012988, upload-time = "2026-09-22T01:19:41.751Z" },
+    { url = "https://files.pythonhosted.org/packages/05/7f/df58ed175582033c4b8b81a0f442f18d3beeac66760c6d87207b9b3a2ce8/pdf_inspector-1.23.0-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:30de7d2e2ffd8bedde4e5755306ed92342444e245d08d3d354c4355ae8f8e30c", size = 6581164, upload-time = "2026-09-22T01:19:43.609Z" },
+    { url = "https://files.pythonhosted.org/packages/96/f3/0b05aeeff019ea6c891180bbb40edc8fe15d3041278e9dbfb408242eba13/pdf_inspector-1.23.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d60ccd0c059fd5295887101c467c78630d0afbc77be76f0470be37db28ea332c", size = 6843628, upload-time = "2026-09-22T01:19:45.699Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/4b/0dc2197bca6dc1739c5c8ea2f593d5214ecc6504cf545295a95269a1d092/pdf_inspector-1.23.0-cp38-abi3-win_amd64.whl", hash = "sha256:04da6d45603091cfd970f42c464ee5dd3b5756a00eb19a0c718b2ade8ee2503e", size = 6147901, upload-time = "2026-09-22T01:19:48.019Z" },
+]
+
+[[package]]
 name = "pdfminer-six"
 version = "20251230"
 source = { registry = "https://pypi.org/simple" }
@@ -3101,6 +3114,7 @@ dependencies = [
     { name = "markitdown", extra = ["all"] },
     { name = "mobi" },
     { name = "numbers-parser" },
+    { name = "pdf-inspector" },
     { name = "pillow" },
     { name = "pydantic-ai", extra = ["groq", "mistral"] },
     { name = "pydantic-settings" },
@@ -3138,6 +3152,7 @@ requires-dist = [
     { name = "markitdown", extras = ["all"], specifier = ">=0.1.5" },
     { name = "mobi", specifier = ">=0.3.3" },
     { name = "numbers-parser", specifier = ">=4.19.0" },
+    { name = "pdf-inspector", specifier = ">=1.23.0" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "pillow-heif", marker = "extra == 'heic'", specifier = ">=0.21.0" },
     { name = "pydantic-ai", extras = ["groq", "mistral"], specifier = ">=1.52.0" },

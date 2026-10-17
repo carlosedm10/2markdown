@@ -191,6 +191,21 @@ def is_tiny_image(image_bytes: bytes, min_px: int | None = None) -> bool:
         return False
 
 
+def image_dark_ratio(image_bytes: bytes) -> float:
+    """Share of pixels darker than mid-grey, on a small downsample."""
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            gray = ImageOps.grayscale(ImageOps.exif_transpose(img) or img)
+            gray.thumbnail((200, 200))
+            hist = gray.histogram()
+    except Exception:
+        return 0.0
+    total = sum(hist)
+    if total <= 0:
+        return 0.0
+    return sum(hist[:160]) / total
+
+
 def tesseract_ocr_with_confidence(image_bytes: bytes) -> tuple[str, float]:
     """Return (text, mean word confidence 0-100)."""
     if shutil.which("tesseract") is None:
@@ -279,7 +294,14 @@ def ocr_image_bytes(
         if cancel is not None and cancel.is_set():
             return text
         if llm_min_confidence is not None:
-            if text and conf >= llm_min_confidence:
+            from twomarkdown.converter.pdf_ocr import tesseract_needs_vision
+
+            if text and not tesseract_needs_vision(
+                text,
+                conf,
+                min_confidence=llm_min_confidence,
+                image_bytes=image_bytes,
+            ):
                 return text
             if llm_fn is not None:
                 if cancel is not None and cancel.is_set():

@@ -25,9 +25,11 @@ from twomarkdown.config import (
     figure_config,
     iwork_config,
     llm_config,
+    pdf_ocr_config,
 )
 from twomarkdown.converter import ereader, iwork, markitdown_converter, ocr, pdf_ocr
 from twomarkdown.converter.markitdown_converter import ConversionError
+from twomarkdown.converter.pdf_route import inspect_pdf, native_markdown_by_page
 from twomarkdown.frontmatter import build_frontmatter
 from twomarkdown.telemetry import (
     begin_batch,
@@ -271,9 +273,21 @@ def _compose_pdf(
         opened = fitz.open(source_path)
         close = True
     try:
-        if pdf_ocr.should_fallback(
-            markdown, suffix=".pdf", pdf_path=source_path, doc=opened
-        ):
+        inspection = inspect_pdf(source_path)
+        inspector_native = (
+            native_markdown_by_page(inspection.snapshot, inspection.routes)
+            if inspection is not None
+            else None
+        )
+        need_ocr = (
+            pdf_ocr.should_fallback(
+                markdown, suffix=".pdf", pdf_path=source_path, doc=opened
+            )
+            or pdf_ocr_config.pdf_ocr_force
+        )
+        if inspection is not None and not need_ocr:
+            need_ocr = any(route != "native" for route in inspection.routes.values())
+        if need_ocr:
             if not show_progress:
                 logger.info("Scanned PDF detected, running page OCR: %s", source_path)
             with span("pdf.ocr_pages"):
@@ -284,6 +298,7 @@ def _compose_pdf(
                     doc=opened,
                     cancel=cancel,
                     file_index=file_index,
+                    inspection=inspection,
                 )
         _cancelled(cancel)
 
@@ -303,6 +318,7 @@ def _compose_pdf(
                 ocr_pages=ocr_pages,
                 tables=tables,
                 doc=opened,
+                inspector_native=inspector_native,
             )
         return text, [n for n, _ in ocr_pages]
     except ConversionError:

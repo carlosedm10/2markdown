@@ -136,6 +136,7 @@ class BatchPlan:
 def _plan_pdf(path: Path) -> FilePlan | None:
     """Count the model-bound work in one PDF. None when it cannot be read."""
     from twomarkdown.converter.pdf_ocr import is_scrambled_text
+    from twomarkdown.converter.pdf_route import count_routes, inspect_pdf
 
     try:
         doc = fitz.open(path)
@@ -143,16 +144,20 @@ def _plan_pdf(path: Path) -> FilePlan | None:
         logger.debug("Plan skipped for %s: %s", path, exc)
         return None
 
+    inspection = inspect_pdf(path)
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
     vlm_pages = figures = 0
     try:
+        if inspection is not None:
+            _, _, vlm_pages = count_routes(inspection.routes)
         for page in doc:
-            try:
-                text = page.get_text().strip()
-            except Exception:
-                continue
-            if len(text) < min_chars or is_scrambled_text(text):
-                vlm_pages += 1
+            if inspection is None:
+                try:
+                    text = page.get_text().strip()
+                except Exception:
+                    continue
+                if len(text) < min_chars or is_scrambled_text(text):
+                    vlm_pages += 1
             if figure_config.figures_enabled and figure_config.describe_figures_llm:
                 try:
                     from twomarkdown.converter.figures import detect_figure_regions

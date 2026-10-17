@@ -23,6 +23,14 @@ interface AppState {
   inputPath: string;
   setInputPath: (p: string) => void;
 
+  /** Every path in the current selection — one file/folder is still just
+   * `[path]`. `inputPath` above always mirrors `inputPaths[0]` (kept in
+   * sync by `setInputPaths`) so Pipeline.tsx's re-inspect-on-GPU-change and
+   * the mainhead title, which only ever cared about a single root, keep
+   * working unchanged. */
+  inputPaths: string[];
+  setInputPaths: (paths: string[]) => void;
+
   inspect: InspectResponse | null;
   setInspect: (i: InspectResponse | null) => void;
 
@@ -84,6 +92,40 @@ export const useAppStore = create<AppState>((set) => ({
       /* ignore */
     }
     set({ inputPath: p });
+  },
+
+  inputPaths: (() => {
+    try {
+      const raw = localStorage.getItem("2md.lastInputPaths");
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(parsed) && parsed.every((p) => typeof p === "string") && parsed.length > 0) {
+        return parsed;
+      }
+      // Migrate from the pre-multi-select single path, if that's all a
+      // returning user has — never lose their remembered selection.
+      const single = localStorage.getItem("2md.lastInputPath");
+      return single ? [single] : [];
+    } catch {
+      return [];
+    }
+  })(),
+  setInputPaths: (paths) => {
+    try {
+      if (paths.length > 0) localStorage.setItem("2md.lastInputPaths", JSON.stringify(paths));
+      else localStorage.removeItem("2md.lastInputPaths");
+    } catch {
+      /* ignore */
+    }
+    set({ inputPaths: paths });
+    // Keep the single-path field mirroring the first selection — see this
+    // field's own docstring above.
+    try {
+      if (paths[0]) localStorage.setItem("2md.lastInputPath", paths[0]);
+      else localStorage.removeItem("2md.lastInputPath");
+    } catch {
+      /* ignore */
+    }
+    set({ inputPath: paths[0] ?? "" });
   },
 
   inspect: null,

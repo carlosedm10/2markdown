@@ -8,6 +8,11 @@ Nothing here talks to the engine; it's OS/filesystem plumbing:
 - `pick_folder` shells out to the same `osascript` a native "Elegir…" button
   would use — no Tauri/native dialog exists yet, so this is the closest
   thing to one from a pure web frontend.
+- `pick_paths` is `pick_folder`'s multi-selection sibling — `choose file`/
+  `choose folder` `with multiple selections allowed`, for the "Elegir
+  archivos…"/"Elegir carpeta…" buttons on Convertir's empty state. Kept
+  generic (one function, a `kind` argument) rather than two near-duplicates.
+  Not yet wired to an endpoint — see this function's own docstring.
 - `pull_ollama_model` reuses `scripts/ollama_host.py` (the same script
   `make build ollama` / `make process` already call) so there is exactly one
   place that knows how to drive the Ollama CLI.
@@ -31,6 +36,7 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
 import httpx
 
@@ -71,6 +77,61 @@ def pick_folder() -> str | None:
         return None
     path = result.stdout.strip()
     return path or None
+
+
+def pick_paths(kind: Literal["file", "folder"] = "folder") -> list[str] | None:
+    """Native macOS multi-selection picker via `osascript` — `pick_folder`'s
+    sibling for "Elegir archivos…"/"Elegir carpeta…" needing more than one
+    item at a time. `kind="file"` runs `choose file`, `kind="folder"` runs
+    `choose folder`, both `with multiple selections allowed`.
+
+    Returns a list of absolute POSIX paths (one per chosen item, order as
+    the Finder dialog returned them), an empty list `[]` on a user Cancel
+    (distinct from `None` — a caller can tell "picked nothing" apart from
+    "no picker available"), and `None` (never raises) on any non-macOS
+    platform, a missing `osascript`, or any other failure to run it.
+
+    Kept generic on purpose (one function, a `kind` argument) rather than a
+    `pick_files`/`pick_folders` pair, so a caller can add the other kind of
+    button without a second near-duplicate implementation here.
+
+    Not yet reachable from the frontend: `POST /api/pick-folder` (the only
+    picker endpoint today) lives in `server/app.py`, which this module does
+    not own — wiring a `POST /api/pick-paths` (or extending pick-folder's
+    response) that calls this is `app.py`'s change to make, not this one's.
+    """
+    if platform.system() != "Darwin":
+        return None
+    if kind == "file":
+        prompt = "Elige uno o más archivos"
+        chooser = "choose file"
+    else:
+        prompt = "Elige una o más carpetas"
+        chooser = "choose folder"
+    script = (
+        f'set thePicked to {chooser} with prompt "{prompt}" '
+        "with multiple selections allowed\n"
+        'set outStr to ""\n'
+        "repeat with onePath in thePicked\n"
+        "  set outStr to outStr & (POSIX path of onePath) & linefeed\n"
+        "end repeat\n"
+        "return outStr"
+    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=300.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("pick_paths(%s): osascript failed: %s", kind, exc)
+        return None
+    if result.returncode != 0:
+        # Non-zero includes the user clicking Cancel — not an error.
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def pull_ollama_model(model: str) -> tuple[bool, str | None]:

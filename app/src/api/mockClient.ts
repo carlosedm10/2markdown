@@ -173,15 +173,25 @@ export const mockClient: ApiClient = {
       },
     }),
 
-  inspect: (body: InspectRequest) =>
-    delay<InspectResponse>({
+  inspect: (body: InspectRequest) => {
+    // Mirrors the real server's "exactly one of path/paths" contract
+    // loosely (a mock has no reason to 422) — whichever one this call
+    // actually sent wins.
+    const paths = body.paths && body.paths.length > 0 ? body.paths : body.path ? [body.path] : ["/"];
+    const multiRoot = paths.length > 1;
+    return delay<InspectResponse>({
       inspect_id: "inspect-fixture-1",
       files: FIXTURE_FILES,
-      totals: FIXTURE_TOTALS,
-      root: body.path,
-      last_preset_id: folders.find((f) => f.path === body.path)?.preset_id ?? null,
-      default_output: resolveDefaultOutput(body.path),
-    }),
+      totals: multiRoot
+        ? { ...FIXTURE_TOTALS, files: FIXTURE_TOTALS.files * paths.length }
+        : FIXTURE_TOTALS,
+      root: paths[0],
+      paths,
+      multi_root: multiRoot,
+      last_preset_id: folders.find((f) => f.path === paths[0])?.preset_id ?? null,
+      default_output: resolveDefaultOutput(paths[0]),
+    });
+  },
 
   getSettings: () => delay({ ...settings }),
   putSettings: (body: SettingsUpdateRequest) => {
@@ -310,6 +320,18 @@ export const mockClient: ApiClient = {
   },
 
   pickFolder: () => delay({ path: null }),
+
+  // Mock stand-in so dev:mock can exercise the multi-select flow without a
+  // real osascript picker (there is none in a browser) — returns a couple
+  // of fixture paths so "Elegir archivos…"/"Elegir carpeta…" have something
+  // to show instead of always looking like Cancel.
+  pickPaths: (kind: "file" | "folder") =>
+    delay({
+      paths:
+        kind === "file"
+          ? ["/Users/carlos/Apuntes/Tema 1.pdf", "/Users/carlos/Apuntes/Tema 2.pdf"]
+          : ["/Users/carlos/Apuntes"],
+    }),
 
   pullOllamaModel: (_model: string) => delay({ ok: true }, 600),
 

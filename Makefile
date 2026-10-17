@@ -33,6 +33,17 @@ endif
 # a variable so a switch to another package manager is a one-line change.
 FRONTEND_PM ?= bun
 
+# Desktop app ports (native host, not Docker) — overridable so `make app`
+# never collides with another Vite/uvicorn project already on the default
+# ports. Both flow through to `app`/`app-web`/`app-down`, the port checks,
+# the vite launch and, via VITE_API_TARGET, the /api proxy.
+APP_WEB_PORT ?= 5173
+APP_API_PORT ?= 8765
+
+# Exported so vite.config.ts's /api proxy (http and ws) always targets the
+# same API port the Makefile just told uvicorn to bind to.
+export VITE_API_TARGET := http://127.0.0.1:$(APP_API_PORT)
+
 # ------------------------------ Help ------------------------------ #
 .PHONY: help
 
@@ -68,9 +79,10 @@ help:
 	@echo "  make backend-shell            Open a shell in the backend container"
 	@echo ""
 	@echo "Desktop app (native host, see docs/README.md Key decisions):"
-	@echo "  make app                      Run API (uv, background) + web UI (bun) in one terminal"
+	@echo "  make app                      Run API (uv, background) + web UI (bun) in one terminal — http://localhost:5173"
+	@echo "  make app APP_WEB_PORT=5180    Use different web/API ports (default 5173/8765)"
 	@echo "  make app-down                  Kill this repo's own uvicorn/vite dev processes"
-	@echo "  make app-web                   bun dev only (app/, port 5173)"
+	@echo "  make app-web                   bun dev only (app/, port \$$(APP_WEB_PORT))"
 	@echo "  make app-build                 bun build (app/, production bundle)"
 	@echo ""
 	@echo "Debugging:"
@@ -132,6 +144,7 @@ up:
 		python3 scripts/ollama_host.py ensure; \
 	fi
 	@echo "Stack up (container $(SERVICE)). Convert with: make process INPUT=..."
+	@echo "Desktop app: make app  → http://localhost:$(APP_WEB_PORT)"
 
 restart:
 	@echo ":: restart: backend"
@@ -283,8 +296,8 @@ define check_port_free
 		cmd=$$(ps -p $$pid -o command= 2>/dev/null); \
 		ours=0; \
 		case "$(1)" in \
-			8765) echo "$$cmd" | grep -q "twomarkdown.server" && ours=1 ;; \
-			5173) cwd=$$(lsof -a -p $$pid -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'); \
+			$(APP_API_PORT)) echo "$$cmd" | grep -q "twomarkdown.server" && ours=1 ;; \
+			$(APP_WEB_PORT)) cwd=$$(lsof -a -p $$pid -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'); \
 				case "$$cwd" in \
 					"$(CURDIR)/app"|"$(CURDIR)/app/") ours=1 ;; \
 				esac ;; \
@@ -302,7 +315,8 @@ endef
 
 app-web:
 	@echo ":: app-web: app"
-	cd app && $(FRONTEND_PM) install && $(FRONTEND_PM) run dev
+	cd app && $(FRONTEND_PM) install
+	cd app && $(FRONTEND_PM) run dev -- --port $(APP_WEB_PORT) --strictPort
 
 app-build:
 	@echo ":: app-build: app"
@@ -324,14 +338,14 @@ app-build:
 # orphan pair behind either.
 app:
 	@echo ":: app: api+web"
-	@$(call check_port_free,8765)
-	@$(call check_port_free,5173)
-	@uv run uvicorn twomarkdown.server:app --host 127.0.0.1 --port 8765 --timeout-graceful-shutdown 3 & \
+	@$(call check_port_free,$(APP_API_PORT))
+	@$(call check_port_free,$(APP_WEB_PORT))
+	@uv run uvicorn twomarkdown.server:app --host 127.0.0.1 --port $(APP_API_PORT) --timeout-graceful-shutdown 3 & \
 	UVPID=$$!; \
 	trap 'kill $$UVPID 2>/dev/null; n=0; while kill -0 $$UVPID 2>/dev/null && [ $$n -lt 5 ]; do n=$$((n + 1)); sleep 1; done; if kill -0 $$UVPID 2>/dev/null; then echo ":: app: uvicorn (pid $$UVPID) did not exit after 5s, sending SIGKILL"; kill -9 $$UVPID 2>/dev/null; fi; PPID_UV=$$(ps -o ppid= -p $$UVPID 2>/dev/null | tr -d " "); if [ -n "$$PPID_UV" ] && kill -0 $$PPID_UV 2>/dev/null; then echo ":: app: uv run parent (pid $$PPID_UV) still alive, sending SIGKILL"; kill -9 $$PPID_UV 2>/dev/null; fi' EXIT; \
 	echo ":: app: waiting for api"; \
 	i=0; \
-	until curl -s -o /dev/null 127.0.0.1:8765; do \
+	until curl -s -o /dev/null 127.0.0.1:$(APP_API_PORT); do \
 		i=$$((i + 1)); \
 		if [ $$i -ge 20 ]; then \
 			echo ":: app: api did not come up after 20s, continuing anyway"; \
@@ -339,7 +353,9 @@ app:
 		fi; \
 		sleep 1; \
 	done; \
-	cd app && $(FRONTEND_PM) install && $(FRONTEND_PM) run dev
+	echo ":: app: api  → http://127.0.0.1:$(APP_API_PORT)"; \
+	echo ":: app: web  → http://localhost:$(APP_WEB_PORT)  (Ctrl-C para parar; make app-down si queda algo)"; \
+	cd app && $(FRONTEND_PM) install && $(FRONTEND_PM) run dev -- --port $(APP_WEB_PORT) --strictPort
 
 # Kills only THIS repo's own `make app` processes: a uvicorn bound to
 # twomarkdown.server, and a vite dev server whose cwd is this repo's app/ —
@@ -368,9 +384,9 @@ define wait_then_kill9
 endef
 
 app-down:
-	@echo ":: app-down: api (8765) + web (5173)"
+	@echo ":: app-down: api ($(APP_API_PORT)) + web ($(APP_WEB_PORT))"
 	@found=0; \
-	pid=$$(lsof -ti tcp:8765 -sTCP:LISTEN 2>/dev/null | head -1); \
+	pid=$$(lsof -ti tcp:$(APP_API_PORT) -sTCP:LISTEN 2>/dev/null | head -1); \
 	if [ -n "$$pid" ] && ps -p $$pid -o command= 2>/dev/null | grep -q "twomarkdown.server"; then \
 		ppid=$$(ps -o ppid= -p $$pid 2>/dev/null | tr -d " "); \
 		echo ":: app-down: killing uvicorn (pid $$pid)"; \
@@ -382,7 +398,7 @@ app-down:
 		fi; \
 		found=1; \
 	fi; \
-	pid=$$(lsof -ti tcp:5173 -sTCP:LISTEN 2>/dev/null | head -1); \
+	pid=$$(lsof -ti tcp:$(APP_WEB_PORT) -sTCP:LISTEN 2>/dev/null | head -1); \
 	if [ -n "$$pid" ]; then \
 		cwd=$$(lsof -a -p $$pid -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'); \
 		case "$$cwd" in \
@@ -392,7 +408,7 @@ app-down:
 				$(call wait_then_kill9,$$pid,vite); \
 				found=1 ;; \
 			*) \
-				echo ":: app-down: port 5173 is in use by pid $$pid but its cwd ($$cwd) is not this repo's app/ — leaving it alone" ;; \
+				echo ":: app-down: port $(APP_WEB_PORT) is in use by pid $$pid but its cwd ($$cwd) is not this repo's app/ — leaving it alone" ;; \
 		esac; \
 	fi; \
 	if [ "$$found" = "0" ]; then echo ":: app-down: nothing of ours was running"; fi

@@ -58,7 +58,7 @@ from twomarkdown.agents.image_ocr import (
 from twomarkdown.batch import gpu_memory
 from twomarkdown.batch.gpu_memory import resident_gb
 from twomarkdown.batch.planner import _local_rates
-from twomarkdown.batch.walker import discover_files
+from twomarkdown.batch.walker import discover_selection
 from twomarkdown.config import (
     DEFAULT_INCLUDE_EXTENSIONS,
     IWORK_BUNDLE_SUFFIXES,
@@ -278,6 +278,9 @@ def _inspect_pdf(path: Path, size: int) -> InspectFile:
     from twomarkdown.converter import math_density
     from twomarkdown.converter.figures import detect_figure_regions
     from twomarkdown.converter.pdf_ocr import is_scrambled_text
+    from twomarkdown.converter.pdf_route import count_routes, inspect_pdf
+
+    inspection = inspect_pdf(path)
 
     try:
         doc = fitz.open(path)
@@ -286,21 +289,31 @@ def _inspect_pdf(path: Path, size: int) -> InspectFile:
 
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
     min_density = pdf_ocr_config.math_format_min_density
-    scanned = figures = text_chars = math_pages = 0
+    scanned = figures = text_chars = math_pages = vision_ocr = 0
     try:
+        if inspection is not None:
+            _, _, vision_ocr = count_routes(inspection.routes)
+            for page_info in inspection.snapshot.pages:
+                text = page_info.markdown or ""
+                text_chars += len(text)
+                if page_info.needs_ocr:
+                    scanned += 1
+                elif math_density.math_density(text) >= min_density:
+                    math_pages += 1
         for page in doc:
-            try:
-                text = page.get_text().strip()
-            except Exception:
-                text = ""
-            text_chars += len(text)
-            page_scanned = len(text) < min_chars or is_scrambled_text(text)
-            if page_scanned:
-                scanned += 1
-            # A page that will get vision OCR never gets format_math() too
-            # (see pdf_ocr.compose_pdf_markdown); only count the other kind.
-            elif math_density.math_density(text) >= min_density:
-                math_pages += 1
+            if inspection is None:
+                try:
+                    text = page.get_text().strip()
+                except Exception:
+                    text = ""
+                text_chars += len(text)
+                page_scanned = len(text) < min_chars or is_scrambled_text(text)
+                if page_scanned:
+                    scanned += 1
+                # A page that will get vision OCR never gets format_math() too
+                # (see pdf_ocr.compose_pdf_markdown); only count the other kind.
+                elif math_density.math_density(text) >= min_density:
+                    math_pages += 1
             if figure_config.figures_enabled:
                 try:
                     figures += len(detect_figure_regions(page))
@@ -310,12 +323,16 @@ def _inspect_pdf(path: Path, size: int) -> InspectFile:
     finally:
         doc.close()
 
+    if inspection is None:
+        vision_ocr = scanned
+
     kind: FileKind = "scanned" if scanned * 2 > pages else "text"
     return InspectFile(
         path=str(path),
         kind=kind,
         pages=pages,
         scanned_pages=scanned,
+        vision_ocr_pages=vision_ocr,
         math_pages=math_pages,
         figures=figures,
         text_chars=text_chars,
@@ -335,62 +352,129 @@ def _inspect_file(path: Path) -> InspectFile:
     )
 
 
-def inspect(path: str | Path) -> InspectResponse:
-    """Walk `path` and count the model-bound work in it, cheaply.
+def inspect_paths(paths: list[str | Path]) -> InspectResponse:
+    """Walk one or more paths — a multi-path SELECTION, not one directory —
+    and count the model-bound work across the whole selection, cheaply.
 
-    A single file is inspected on its own; a directory is walked with the same
-    `discover_files` the batch itself uses, so an estimate only ever covers
-    files that would actually be converted.
+    Each entry is resolved on its own via `batch.walker.discover_selection`
+    (a file stays as itself; a directory is walked with the same
+    `discover_files` a single-folder `inspect()` already uses), then
+    deduped and stably sorted, so an estimate only ever covers files that
+    would actually be converted, in a deterministic order regardless of how
+    the caller listed its entries.
+
+    A single-entry selection (the common case: `inspect()`'s own `path`
+    argument delegates here with a one-item list) behaves exactly as
+    `inspect()` always did — `root` names that one entry, `multi_root` is
+    `False`, `paths` is `[root]`, and `default_output` goes through
+    `server/settings.py:default_output_for()` same as before. Two or more
+    entries set `root` to their deepest common ancestor directory
+    (`twomarkdown.paths.common_ancestor`) instead, `multi_root` is `True`,
+    and `default_output` is computed directly from the selection's own
+    shape (`twomarkdown.paths.default_output_dir_for_selection` — see that
+    function's docstring for the sibling-group vs. non-sibling rule) rather
+    than through `settings.default_output_for()`, which only ever names one
+    input path.
     """
-    resolved = Path(path)
-    if resolved.is_dir():
-        # No output directory exists yet at inspect time; point at a sibling
-        # that cannot itself be inside the input tree, so nothing is excluded.
-        fake_output = resolved.parent / f".{resolved.name}.inspect-out"
-        files = discover_files(resolved, fake_output)
-    elif resolved.is_file():
-        files = [resolved]
-    else:
-        raise FileNotFoundError(str(path))
+    from twomarkdown.paths import common_ancestor, default_output_dir_for_selection
 
+    if not paths:
+        raise ValueError("inspect_paths() needs at least one path")
+
+    requested = [Path(p) for p in paths]
+    resolved_roots: list[Path] = []
+    seen_roots: set[Path] = set()
+    for entry in requested:
+        if not entry.is_dir() and not entry.is_file():
+            raise FileNotFoundError(str(entry))
+        resolved = entry.resolve()
+        if resolved in seen_roots:
+            continue
+        seen_roots.add(resolved)
+        resolved_roots.append(resolved)
+
+    files = discover_selection(resolved_roots)
     inspected = [_inspect_file(f) for f in files]
     totals = InspectTotals(
         files=len(inspected),
         pages=sum(f.pages for f in inspected),
         scanned_pages=sum(f.scanned_pages for f in inspected),
+        vision_ocr_pages=sum(f.vision_ocr_pages for f in inspected),
         math_pages=sum(f.math_pages for f in inspected),
         figures=sum(f.figures for f in inspected),
         bytes=sum(f.bytes for f in inspected),
     )
-    digest = hashlib.sha1(str(resolved.resolve()).encode("utf-8")).hexdigest()
+
+    multi_root = len(resolved_roots) > 1
+    # A single entry's own root is itself (file or directory), same as
+    # `inspect()` always resolved it — `common_ancestor()` only needs to
+    # step in once there is more than one entry to find an ancestor *of*.
+    root = resolved_roots[0] if not multi_root else common_ancestor(resolved_roots)
+
+    # Same digest a lone `path` always hashed (`str(resolved.resolve())`) when
+    # there is exactly one entry, so this never changes `inspect_id` for an
+    # existing single-path caller; a multi-path selection hashes every entry,
+    # in the same stable (sorted) order, so the same selection always yields
+    # the same id regardless of the order its entries were listed in.
+    digest_source = "|".join(str(r) for r in sorted(resolved_roots, key=str))
+    digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()
+
     last_preset_id: str | None = None
     try:
         from twomarkdown.server import folder_presets
 
-        last_preset_id = folder_presets.get_last_preset_id(str(resolved))
+        last_preset_id = folder_presets.get_last_preset_id(str(root))
     except Exception:
         # Preset history is a convenience, never a reason inspection itself
         # should fail — same spirit as every other best-effort probe here.
         pass
-    default_output = str(resolved.parent / f"{resolved.name}_2markdown")
-    try:
-        from twomarkdown.server import settings as settings_module
 
-        default_output = settings_module.default_output_for(str(resolved))
-    except Exception:
-        # Same best-effort spirit as last_preset_id above — a broken
-        # settings.json must never make inspection itself fail; the sibling
-        # fallback above is exactly what default_output_for()'s own default
-        # ("sibling") mode already computes.
-        pass
+    if multi_root:
+        # Selection-shaped rule (see `default_output_dir_for_selection`'s own
+        # docstring) — deliberately not `settings.default_output_for()`,
+        # which only ever names one input path.
+        default_output = str(default_output_dir_for_selection(resolved_roots))
+    else:
+        default_output = str(root.parent / f"{root.name}_2markdown")
+        try:
+            from twomarkdown.server import settings as settings_module
+
+            default_output = settings_module.default_output_for(str(root))
+        except Exception:
+            # Same best-effort spirit as last_preset_id above — a broken
+            # settings.json must never make inspection itself fail; the
+            # sibling fallback above is exactly what default_output_for()'s
+            # own default ("sibling") mode already computes.
+            pass
+
     return InspectResponse(
         inspect_id=digest[:16],
-        root=str(resolved),
+        root=str(root),
+        paths=[str(r) for r in resolved_roots],
+        multi_root=multi_root,
         files=inspected,
         totals=totals,
         last_preset_id=last_preset_id,
         default_output=default_output,
     )
+
+
+def inspect(
+    path: str | Path | None = None, *, paths: list[str | Path] | None = None
+) -> InspectResponse:
+    """Walk `path` (a single file or folder) and count the model-bound work
+    in it, cheaply — or, for a multi-path SELECTION, pass `paths` instead
+    (mutually exclusive with `path`); both forms delegate to
+    `inspect_paths()`, which documents the full behaviour and the
+    single-vs-multi-entry differences (`root`/`multi_root`/`default_output`).
+    """
+    if paths is not None:
+        if path is not None:
+            raise ValueError("inspect() takes either `path` or `paths`, not both")
+        return inspect_paths(paths)
+    if path is None:
+        raise ValueError("inspect() needs `path` or `paths`")
+    return inspect_paths([path])
 
 
 # ---------------------------------------------------------------------------
@@ -1043,7 +1127,11 @@ def estimate(
 
     stages = [
         _extract_stage(totals.pages),
-        _ocr_stage(ocr_model, totals.scanned_pages, ocr_dims),
+        _ocr_stage(
+            ocr_model,
+            totals.vision_ocr_pages or totals.scanned_pages,
+            ocr_dims,
+        ),
         _figures_stage(
             figure_model,
             figure_count,

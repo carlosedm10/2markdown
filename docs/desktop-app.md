@@ -142,6 +142,12 @@ rename a field, edit both in the same change.
   `app/` build in a native window and spawns the FastAPI server (or an
   embedded sidecar) instead of a dev server — nothing in this contract
   changes for that move.
+- **CORS.** The web UI's dev-server port is configurable (`make app
+  APP_WEB_PORT=5180`), so `CORSMiddleware` in `twomarkdown/server/app.py`
+  can't allow only the single hardcoded `http://localhost:5173` origin.
+  It uses `allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"`
+  instead — any `localhost`/`127.0.0.1` origin at any port is allowed, and
+  nothing else is.
 
 ## API contract
 
@@ -184,7 +190,8 @@ is a model in `twomarkdown/server/schemas.py`, mirrored in
 | PATCH | `/api/syncs/{id}` | `SyncUpdateRequest` | `Sync` |
 | DELETE | `/api/syncs/{id}` | — | `{"ok": true}` |
 | POST | `/api/prices/manual` | `ManualPriceRequest` | `ManualPriceRequest` |
-| POST | `/api/pick-folder` | — | `PickFolderResponse` |
+| POST | `/api/pick-folder` | — | `PickFolderResponse` (native single-folder dialog; `path: null` on Cancel/non-macOS) |
+| POST | `/api/pick-paths` | `PickPathsRequest` | `PickPathsResponse` (native multi-select, `kind: "file"\|"folder"`, default `"folder"`; `paths: []` on Cancel or non-macOS — never an error) |
 | POST | `/api/ollama/pull` | `OllamaPullRequest` | `OllamaPullResponse` |
 | POST | `/api/cloud/openai/key` | `OpenAIKeyRequest` | `OpenAIKeyResponse` (kept as a plain alias, see below) |
 | POST | `/api/cloud/{provider}/key` | `CloudKeyRequest` | `CloudKeyResponse` |
@@ -314,6 +321,53 @@ Model ids follow the engine's `"<provider>:<model>"` convention
   computed server-side (see the `/api/settings` note above) — the app shows
   this value rather than re-deriving the sibling/fixed-dir rule itself, and
   a `POST /api/jobs` that omits `output` lands there too.
+  - **Multi-path SELECTION.** `InspectRequest` takes `path` (a single file
+    or folder, as always) **or** `paths` (a list of several files and/or
+    folders picked together — e.g. a Finder multi-select) — never both;
+    sending both, or neither, is `422`. `batch.estimate.inspect_paths()`
+    (which `inspect()` now delegates to even for the single-`path` case)
+    walks each entry the same way a lone folder always was
+    (`batch.walker.discover_selection`: a file stays itself, a folder is
+    walked with `discover_files`), then dedupes and stably sorts the
+    combined list, so the file order never depends on the order the
+    entries were listed in.
+    `InspectResponse` gains `paths: list[str]` (every requested entry, in
+    the single-`path` case just `[root]`) and `multi_root: bool`. `root`
+    stays the single requested path when there is exactly one entry
+    (`multi_root: false`, unchanged from before); for 2+ entries it becomes
+    their deepest common ancestor **directory**
+    (`twomarkdown.paths.common_ancestor`, via `os.path.commonpath`) and
+    `multi_root` is `true` — `root` is what a job created from this
+    `inspect_id` mirrors output paths against (`_mirror_output_path`), and
+    what `default_output`'s name is derived from.
+    `default_output` for a multi-root selection is **not** run through
+    `settings.default_output_for()` (that resolver only ever names one
+    input path) — instead `twomarkdown.paths.default_output_dir_for_selection()`
+    applies one predictable rule: when every selected entry sits directly
+    inside the common ancestor (a sibling group — e.g. three files all in
+    the same folder), the output folder is named after that ancestor, next
+    to it (`"<ancestor>_2markdown"`, the same convention as a single folder
+    input); otherwise (the selection spans entries at different depths or
+    under different subtrees) there is no one name that describes it, so it
+    falls back to a plain `"2markdown"` folder next to the *first* selected
+    entry. `last_preset_id` is looked up against the common `root`, not
+    per-entry.
+    `POST /api/jobs` mirrors this: `JobCreateRequest.paths` is the same
+    mutually-exclusive alternative to `path` (422 if both are sent), and an
+    `inspect_id`-only request resolves to `paths` when that inspection was
+    `multi_root` (so the job converts exactly the selected entries, not
+    every file under their common ancestor) or to `path` otherwise.
+    `server/jobs.py:_resolve_paths()` reuses the same `discover_selection`
+    walk (now excluding the job's *real* `output` directory, same as a
+    single-folder job already does) and the same `common_ancestor()` rule
+    for `input_root`. `folder_presets` (the "what did I pick last time"
+    convenience) is recorded once per job, keyed on that common root — never
+    one entry per selected file. `Job` gains `paths: list[str] | None`
+    (mirroring the request; `None`/`input` set as before for a single-path
+    job) so a job rehydrated from `jobs_history.json` after a restart can
+    re-derive the same common-ancestor `input_root` without re-walking
+    anything — `Job.files[]` itself, not a fresh walk, is always the source
+    of truth for which files a rehydrated job actually has.
 - **`POST /api/estimate`** is pure computation over an existing `inspect_id`
   and a candidate `Pipeline` — no side effects, safe to call on every
   Pipeline-screen edit (as the mockup's live simulator does). `inspect_id`

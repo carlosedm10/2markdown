@@ -65,6 +65,8 @@ from twomarkdown.server.schemas import (
     PageDetail,
     PageUpdateRequest,
     PickFolderResponse,
+    PickPathsRequest,
+    PickPathsResponse,
     Preset,
     PresetsUpdateRequest,
     ResolveModelRequest,
@@ -128,7 +130,7 @@ app = FastAPI(title="2markdown desktop server", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -173,8 +175,16 @@ def post_models_resolve(req: ResolveModelRequest) -> ResolveModelResponse:
 def post_inspect(req: InspectRequest) -> InspectResponse:
     from twomarkdown.batch.estimate import inspect
 
+    if req.path is not None and req.paths is not None:
+        raise HTTPException(
+            status_code=422, detail="path and paths are mutually exclusive"
+        )
+    if req.path is None and req.paths is None:
+        raise HTTPException(status_code=422, detail="path or paths required")
     try:
-        response = inspect(req.path)
+        response = (
+            inspect(paths=req.paths) if req.paths is not None else inspect(req.path)
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     _inspections[response.inspect_id] = response
@@ -318,33 +328,63 @@ def _resolve_pipeline(req: JobCreateRequest):
 
 @app.post("/api/jobs")
 def post_jobs(req: JobCreateRequest) -> JobCreateResponse:
-    if req.inspect_id is None and req.path is None:
-        raise HTTPException(status_code=422, detail="inspect_id or path required")
+    if req.path is not None and req.paths is not None:
+        raise HTTPException(
+            status_code=422, detail="path and paths are mutually exclusive"
+        )
+    if req.inspect_id is None and req.path is None and req.paths is None:
+        raise HTTPException(
+            status_code=422, detail="inspect_id, path, or paths required"
+        )
     pipeline = _resolve_pipeline(req)
     _reject_if_blocked(pipeline)
     path = req.path
-    if path is None and req.inspect_id is not None:
-        # `InspectResponse.root` is the path the user gave `/api/inspect` (a
-        # file's own path, or a walked directory's own path) — re-resolving a
-        # job's files from it, single- or multi-file alike, is exactly what
-        # `_resolve_files`/`normalize_batch_input` already do for an explicit
-        # `path`, so a bare `inspect_id` reaches the same walk.
+    paths = req.paths
+    if path is None and paths is None and req.inspect_id is not None:
+        # `InspectResponse.root`/`.paths` are what the user gave
+        # `/api/inspect` — re-resolving a job's files from them, single- or
+        # multi-path alike, is exactly what `_resolve_files`/`_resolve_paths`
+        # already do for an explicit `path`/`paths`, so a bare `inspect_id`
+        # reaches the same walk. A multi-root inspection resolves to
+        # `paths` (its own entries, so the job converts exactly those, not
+        # every file under their common ancestor); a single-root one
+        # resolves to `path` as before.
         inspection = _get_inspection(req.inspect_id)
-        path = inspection.root
+        if inspection.multi_root:
+            paths = inspection.paths
+        else:
+            path = inspection.root
+    # For folder-preset recording and the output-default fallback below: the
+    # one path (single-path job) or common root (multi-path selection) this
+    # job's input boils down to — never one-entry-per-file for a selection
+    # (see folder_presets.py's own docstring on why that would be wrong).
+    record_path = path
+    if record_path is None and paths is not None:
+        from twomarkdown.paths import common_ancestor
+
+        record_path = str(common_ancestor([Path(p) for p in paths]))
     output = req.output
     if output is None:
         # No explicit output — the same resolver `InspectResponse.
-        # default_output` already showed the caller (server/settings.py),
-        # so a caller that only sent `pipeline`/`preset_id` lands exactly
-        # where Convertir's own preview said it would.
-        if path is None:
+        # default_output` already showed the caller (server/settings.py for
+        # a single path; `paths.default_output_dir_for_selection` for a
+        # multi-path selection), so a caller that only sent
+        # `pipeline`/`preset_id` lands exactly where Convertir's own preview
+        # said it would.
+        if path is not None:
+            output = settings_module.default_output_for(path)
+        elif paths is not None:
+            from twomarkdown.paths import default_output_dir_for_selection
+
+            output = str(default_output_dir_for_selection([Path(p) for p in paths]))
+        else:
             raise HTTPException(
                 status_code=422, detail="output required when path is unknown"
             )
-        output = settings_module.default_output_for(path)
     try:
         job = jobs.create_job(
             path=path,
+            paths=paths,
             inspect_id=req.inspect_id,
             output=output,
             pipeline=pipeline,
@@ -353,13 +393,14 @@ def post_jobs(req: JobCreateRequest) -> JobCreateResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if req.mode == "once" and path is not None:
+    if req.mode == "once" and record_path is not None:
         # `req.preset_id` is `None` when the request sent a raw `Pipeline`
         # instead — recorded as such (see folder_presets.py's own docstring)
         # rather than skipped, so a folder that switches back and forth
         # between a preset and an ad-hoc pipeline still reflects the latest
-        # choice, not a stale preset id.
-        folder_presets.record(path, req.preset_id)
+        # choice, not a stale preset id. A multi-path selection is recorded
+        # once, keyed on its common root — never one entry per file.
+        folder_presets.record(record_path, req.preset_id)
     return JobCreateResponse(job_id=job.job_id)
 
 
@@ -687,6 +728,12 @@ def post_prices_manual(req: ManualPriceRequest) -> ManualPriceRequest:
 async def post_pick_folder() -> PickFolderResponse:
     path = await run_in_threadpool(host.pick_folder)
     return PickFolderResponse(path=path)
+
+
+@app.post("/api/pick-paths")
+async def post_pick_paths(req: PickPathsRequest) -> PickPathsResponse:
+    paths = await run_in_threadpool(host.pick_paths, req.kind)
+    return PickPathsResponse(paths=paths or [])
 
 
 @app.post("/api/ollama/pull")

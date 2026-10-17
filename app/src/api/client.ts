@@ -175,6 +175,18 @@ export const realClient: ApiClient = {
     }
   },
 
+  // No POST /api/pick-paths on the server yet (see contract.ts's docstring)
+  // — this 404s until app.py grows it, and the UI's own onClick handler
+  // treats an empty result as "picker unavailable, use the path box"
+  // exactly like a Cancel, so nothing here needs to distinguish the two.
+  pickPaths: async (kind: "file" | "folder") => {
+    try {
+      return await req<{ paths: string[] }>(`/pick-paths?kind=${kind}`, { method: "POST" });
+    } catch {
+      return { paths: [] };
+    }
+  },
+
   pullOllamaModel: (model: string) =>
     req<{ ok: boolean; error?: string | null }>("/ollama/pull", { method: "POST", body: JSON.stringify({ model }) }),
 

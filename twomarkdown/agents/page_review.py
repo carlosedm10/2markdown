@@ -354,9 +354,7 @@ _OPERATOR_NAME_COMMANDS = (
     "limsup", "ln", "log", "max", "min", "mod", "Pr", "sec", "sin", "sinh",
     "sup", "tan", "tanh",
 )  # fmt: skip
-_OPERATOR_NAME_RE = re.compile(
-    r"\\(" + "|".join(_OPERATOR_NAME_COMMANDS) + r")\b"
-)
+_OPERATOR_NAME_RE = re.compile(r"\\(" + "|".join(_OPERATOR_NAME_COMMANDS) + r")\b")
 
 
 def _alnum_tokens(text: str) -> list[str]:

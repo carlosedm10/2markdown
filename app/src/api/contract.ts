@@ -104,6 +104,16 @@ export interface ApiClient {
    * returns { path: null }. */
   pickFolder(): Promise<{ path: string | null }>;
 
+  /** Multi-selection sibling of `pickFolder`, for the "Elegir archivos…"/
+   * "Elegir carpeta…" buttons on Convertir's empty state — backed by
+   * `twomarkdown/server/host.py:pick_paths`. No `POST /api/pick-paths`
+   * endpoint exists yet (that's `server/app.py`'s change to make, not this
+   * app's), so the real client's call 404s today; `[]` (never `null`) means
+   * "no picker available right now", same signal a Cancel would give,
+   * which the UI treats as "fall back to the manual path box" per N6's
+   * "never leave the screen in a state with no way forward" rule. */
+  pickPaths(kind: "file" | "folder"): Promise<{ paths: string[] }>;
+
   pullOllamaModel(model: string): Promise<{ ok: boolean; error?: string | null }>;
   /** POST /api/cloud/{provider}/key, DELETE /api/cloud/{provider}/key — every
    * provider in CloudProviderId. Never shows the env var name in the UI. */

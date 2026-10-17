@@ -17,6 +17,13 @@ bun run format   # prettier --write .
 bun run preview  # preview the production build
 ```
 
+Prefer `make app` / `make app-web` from the repo root over running these
+directly — they set the web/API ports (`APP_WEB_PORT`, `APP_API_PORT`,
+default 5173/8765) and export `VITE_API_TARGET` so the `/api` proxy in
+`vite.config.ts` follows `APP_API_PORT` instead of the hardcoded default.
+Running `bun run dev` here directly always proxies to 127.0.0.1:8765 unless
+`VITE_API_TARGET` is set in the environment first.
+
 ## Mock mode
 
 `bun run dev:mock` (or `VITE_MOCK=1 bun run dev`, or drop a

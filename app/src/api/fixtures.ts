@@ -49,20 +49,22 @@ export const FIXTURE_SYSTEM: SystemInfo = {
 };
 
 export const FIXTURE_FILES: InspectFile[] = [
-  { path: "Apuntes/Tema 1.pdf", kind: "scanned", pages: 3, scanned_pages: 3, figures: 1, text_chars: 0, bytes: 5_200_000 },
-  { path: "Apuntes/Tema 2.pdf", kind: "scanned", pages: 4, scanned_pages: 4, figures: 2, text_chars: 0, bytes: 6_800_000 },
-  { path: "Apuntes/Tema 3.pdf", kind: "scanned", pages: 2, scanned_pages: 2, figures: 0, text_chars: 0, bytes: 3_100_000 },
-  { path: "Apuntes/Tema 4.pdf", kind: "scanned", pages: 3, scanned_pages: 3, figures: 1, text_chars: 0, bytes: 4_900_000 },
-  { path: "Apuntes/Bibliografía.docx", kind: "office", pages: 1, scanned_pages: 0, figures: 0, text_chars: 4200, bytes: 120_000 },
-  { path: "Apuntes/Tema 5.pdf", kind: "scanned", pages: 5, scanned_pages: 5, figures: 1, text_chars: 0, bytes: 7_400_000 },
-  { path: "Apuntes/Tema 6.pdf", kind: "scanned", pages: 3, scanned_pages: 3, figures: 0, text_chars: 0, bytes: 5_000_000 },
-  { path: "Apuntes/Tema 7.pdf", kind: "scanned", pages: 3, scanned_pages: 3, figures: 1, text_chars: 0, bytes: 4_600_000 },
+  { path: "Apuntes/Tema 1.pdf", kind: "scanned", pages: 3, scanned_pages: 3, vision_ocr_pages: 3, math_pages: 0, figures: 1, text_chars: 0, bytes: 5_200_000 },
+  { path: "Apuntes/Tema 2.pdf", kind: "scanned", pages: 4, scanned_pages: 4, vision_ocr_pages: 4, math_pages: 0, figures: 2, text_chars: 0, bytes: 6_800_000 },
+  { path: "Apuntes/Tema 3.pdf", kind: "scanned", pages: 2, scanned_pages: 2, vision_ocr_pages: 2, math_pages: 0, figures: 0, text_chars: 0, bytes: 3_100_000 },
+  { path: "Apuntes/Tema 4.pdf", kind: "scanned", pages: 3, scanned_pages: 3, vision_ocr_pages: 3, math_pages: 0, figures: 1, text_chars: 0, bytes: 4_900_000 },
+  { path: "Apuntes/Bibliografía.docx", kind: "office", pages: 1, scanned_pages: 0, vision_ocr_pages: 0, math_pages: 0, figures: 0, text_chars: 4200, bytes: 120_000 },
+  { path: "Apuntes/Tema 5.pdf", kind: "scanned", pages: 5, scanned_pages: 5, vision_ocr_pages: 5, math_pages: 0, figures: 1, text_chars: 0, bytes: 7_400_000 },
+  { path: "Apuntes/Tema 6.pdf", kind: "scanned", pages: 3, scanned_pages: 3, vision_ocr_pages: 3, math_pages: 0, figures: 0, text_chars: 0, bytes: 5_000_000 },
+  { path: "Apuntes/Tema 7.pdf", kind: "scanned", pages: 3, scanned_pages: 3, vision_ocr_pages: 3, math_pages: 0, figures: 1, text_chars: 0, bytes: 4_600_000 },
 ];
 
 export const FIXTURE_TOTALS = {
   files: FIXTURE_FILES.length,
   pages: FIXTURE_FILES.reduce((a, f) => a + f.pages, 0),
   scanned_pages: FIXTURE_FILES.reduce((a, f) => a + f.scanned_pages, 0),
+  vision_ocr_pages: FIXTURE_FILES.reduce((a, f) => a + f.vision_ocr_pages, 0),
+  math_pages: FIXTURE_FILES.reduce((a, f) => a + f.math_pages, 0),
   figures: FIXTURE_FILES.reduce((a, f) => a + f.figures, 0),
   bytes: FIXTURE_FILES.reduce((a, f) => a + f.bytes, 0),
 };

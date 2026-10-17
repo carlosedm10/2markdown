@@ -49,7 +49,8 @@ export default function Convert() {
   const mode = useAppStore((s) => s.mode);
   const setMode = useAppStore((s) => s.setMode);
   const inputPath = useAppStore((s) => s.inputPath);
-  const setInputPath = useAppStore((s) => s.setInputPath);
+  const inputPaths = useAppStore((s) => s.inputPaths);
+  const setInputPaths = useAppStore((s) => s.setInputPaths);
   const inspect = useAppStore((s) => s.inspect);
   const setInspect = useAppStore((s) => s.setInspect);
   const presets = useAppStore((s) => s.presets);
@@ -110,43 +111,91 @@ export default function Convert() {
   const [inspectError, setInspectError] = useState<string | null>(null);
   const inspectInFlight = useRef(false);
 
+  // Multi-selection staging, empty screen only: paths gathered from the
+  // native picker, a drop, or the manual box sit here as removable chips
+  // until the user asks to inspect them — see runInspect below. Seeded from
+  // the store's remembered selection so a page reload (or a `setInspect
+  // (null)` bounce back to this screen) doesn't start from a blank slate.
+  const [pendingPaths, setPendingPaths] = useState<string[]>(() => inputPaths);
+  const [manualDraft, setManualDraft] = useState("");
+  // True once a drop has been confirmed to carry no usable absolute path —
+  // a plain (non-Electron) browser never exposes one for a file dragged in
+  // from Finder (verified empirically: `File.path` is `undefined` here, and
+  // `DataTransferItem.webkitGetAsEntry().fullPath` is relative to the drop,
+  // not a real filesystem location either). See handleDrop below.
+  const [dropUnsupported, setDropUnsupported] = useState(false);
+
+  function addPendingPaths(paths: string[]) {
+    setDropUnsupported(false);
+    setInspectError(null);
+    setPendingPaths((prev) => {
+      const merged = [...prev];
+      for (const raw of paths) {
+        const p = raw.trim();
+        if (p && !merged.includes(p)) merged.push(p);
+      }
+      return merged;
+    });
+  }
+
+  function removePendingPath(p: string) {
+    setPendingPaths((prev) => prev.filter((x) => x !== p));
+  }
+
   const reviewFileIndex = params.fileIndex != null ? Number(params.fileIndex) : null;
 
   const selectedPreset = presets.find((p) => p.id === selectedPresetId) ?? presets[0];
   const pipeline = selectedPreset?.pipeline;
 
-  async function runInspect(path: string) {
-    if (!path || inspectInFlight.current) return;
+  // `paths` is the whole selection (one entry for the everyday single-
+  // file/folder case, more for a real multi-selection) — the server's
+  // `InspectRequest` takes exactly one of `path`/`paths` (422s a request
+  // sending both or neither, see api/types.ts's docstring), so this always
+  // sends `paths` alone rather than also carrying a redundant `path`.
+  async function runInspect(paths: string[]) {
+    const cleaned = paths.map((p) => p.trim()).filter(Boolean);
+    if (cleaned.length === 0 || inspectInFlight.current) return;
     inspectInFlight.current = true;
     setInspecting(true);
     setInspectError(null);
     try {
-      const r = await api.inspect({ path });
+      const r = await api.inspect({ paths: cleaned });
       setInspect(r);
-      setOutputPath(r.default_output ?? `${path.replace(/\/+$/, "")}_2markdown`);
+      setInputPaths(r.paths && r.paths.length > 0 ? r.paths : cleaned);
+      setOutputPath(r.default_output ?? `${cleaned[0].replace(/\/+$/, "")}_2markdown`);
+      setPendingPaths([]);
       if (r.last_preset_id && presets.some((p) => p.id === r.last_preset_id)) {
         setSelectedPresetId(r.last_preset_id);
       } else if (settings && presets.some((p) => p.id === settings.default_preset_id)) {
         setSelectedPresetId(settings.default_preset_id);
       }
     } catch (err) {
-      setInspectError(err instanceof Error ? err.message : "No se pudo leer la carpeta.");
+      setInspectError(err instanceof Error ? err.message : "No se pudo leer la selección.");
     } finally {
       inspectInFlight.current = false;
       setInspecting(false);
     }
   }
 
-  // Single submit path for both the "o pega una ruta" box's Enter key and
-  // (were one ever added) a submit button — see the N6 note above.
-  function submitInputPath(e?: React.FormEvent) {
+  // Parses the manual box's "one per line, or comma-separated" input into
+  // individual paths and adds them as chips — it never inspects directly
+  // (see pendingPaths' own note above): the user reviews/removes chips,
+  // then "Inspeccionar" (below) is the one place that calls runInspect,
+  // same as the native-picker buttons and a drop that resolved real paths.
+  function submitManualPaths(e?: React.FormEvent) {
     e?.preventDefault();
-    void runInspect(inputPath);
+    const parsed = manualDraft
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (parsed.length === 0) return;
+    addPendingPaths(parsed);
+    setManualDraft("");
   }
 
   useEffect(() => {
-    if (!jobId && inputPath && !inspect) {
-      runInspect(inputPath);
+    if (!jobId && inputPaths.length > 0 && !inspect) {
+      runInspect(inputPaths);
     } else if (!jobId && inspect) {
       // N16: this screen can remount with `inspect` already sitting in the
       // store (e.g. back from Pipeline after editing/creating a preset)
@@ -292,23 +341,50 @@ export default function Convert() {
   const unknownPriceStage = estimate?.stages.find((s) => s.unknown_price);
   const cloudAlt = useMemo(() => estimate?.alternatives?.[0], [estimate]);
 
-  async function handleDrop(e: React.DragEvent) {
+  function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0] as (File & { path?: string }) | undefined;
-    const path = file?.path || file?.name;
-    if (path) {
-      setInputPath(path);
-      await runInspect(path);
+
+    const files = Array.from(e.dataTransfer.files) as (File & { path?: string })[];
+    // `DataTransferItem.webkitGetAsEntry()` is read too (per-item, folders
+    // included) so a future host that resolves entries to real paths has
+    // somewhere to plug in — but its `fullPath` is relative to the drop
+    // (e.g. "/Tema 1.pdf", or "/Apuntes/Tema 1.pdf" for a dropped folder's
+    // child), never the item's actual filesystem location, so it buys
+    // nothing usable today; only logged in dev to make that visible.
+    const entries = e.dataTransfer.items
+      ? Array.from(e.dataTransfer.items)
+          .map((it) => (typeof it.webkitGetAsEntry === "function" ? it.webkitGetAsEntry() : null))
+          .filter((en): en is FileSystemEntry => en != null)
+      : [];
+    if (files.length === 0 && entries.length === 0) return;
+
+    // Only an Electron-style host patches a real absolute path onto a
+    // dropped `File` (`file.path`). Verified ABSENT in this app's actual
+    // runtime — it's a plain Vite dev server opened in a normal browser, not
+    // Electron: `new File([...]).path` is `undefined` there (checked
+    // directly against this app's own build), and `entries[i].fullPath`
+    // above is exactly as unusable. This branch stays as the forward-
+    // compatible path for the day a native host wrapper adds one, but it is
+    // NOT live today — never claim it works when it doesn't.
+    const withRealPaths = files.filter((f) => typeof f.path === "string" && f.path);
+    if (withRealPaths.length > 0) {
+      addPendingPaths(withRealPaths.map((f) => f.path as string));
+      return;
     }
+
+    // Nothing dropped carries a path the engine can open. Do NOT fall back
+    // to `file.name` (a bare filename, not a real path — that used to be
+    // this handler's silent bug: it would "succeed" locally and then just
+    // 404/fail once the server tried to open a file that doesn't exist at
+    // that name in its own cwd). Send the user to the native picker or the
+    // manual box instead.
+    setDropUnsupported(true);
   }
 
-  async function pickFolder() {
-    const r = await api.pickFolder();
-    if (r.path) {
-      setInputPath(r.path);
-      await runInspect(r.path);
-    }
+  async function pickPaths(kind: "file" | "folder") {
+    const r = await api.pickPaths(kind);
+    if (r.paths.length > 0) addPendingPaths(r.paths);
   }
 
   function editPreset() {
@@ -363,7 +439,10 @@ export default function Convert() {
 
   function convertAnotherFolder() {
     setInspect(null);
-    setInputPath("");
+    setInputPaths([]);
+    setPendingPaths([]);
+    setManualDraft("");
+    setDropUnsupported(false);
     setCurrentJobId(null);
     setJob(null);
     setEstimate(null);
@@ -505,7 +584,7 @@ export default function Convert() {
       <div className="mainhead">
         <div>
           <div className="eyebrow">Convertir</div>
-          <h2>{inspect ? fileName(inputPath) || "Carpeta" : "Elige qué convertir"}</h2>
+          <h2>{inspect ? (inspect.multi_root ? "Varios elementos" : fileName(inputPath) || "Carpeta") : "Elige qué convertir"}</h2>
         </div>
       </div>
 
@@ -518,7 +597,12 @@ export default function Convert() {
               <button className={mode === "once" ? "on" : ""} onClick={() => setMode("once")}>
                 Una vez
               </button>
-              <button className={mode === "sync" ? "on" : ""} onClick={() => setMode("sync")}>
+              <button
+                className={mode === "sync" ? "on" : ""}
+                disabled={!!inspect?.multi_root}
+                title={inspect?.multi_root ? "Sincronizar solo admite una carpeta — elige una única carpeta para vigilarla." : undefined}
+                onClick={() => setMode("sync")}
+              >
                 Mantener sincronizada
               </button>
             </div>
@@ -543,10 +627,13 @@ export default function Convert() {
               <div key="inspected" style={{ display: "contents" }}>
                 <div className="head">
                   <div>
-                    <b>{fileName(inputPath)}</b>
+                    <b>{inspect.multi_root ? "Varios elementos" : fileName(inputPath)}</b>
                     <span style={{ marginLeft: 8 }}>
-                      {plural(inspect.totals.files, "archivo")} · {plural(inspect.totals.pages, "página")} ·{" "}
-                      {plural(inspect.totals.scanned_pages, "escaneada")} · {fmtBytes(inspect.totals.bytes)}
+                      {inspect.multi_root
+                        ? `${plural(inspect.totals.files, "archivo")} de ${plural((inspect.paths ?? inputPaths).length, "carpeta")}`
+                        : plural(inspect.totals.files, "archivo")}{" "}
+                      · {plural(inspect.totals.pages, "página")} · {plural(inspect.totals.scanned_pages, "escaneada")} ·{" "}
+                      {fmtBytes(inspect.totals.bytes)}
                     </span>
                   </div>
                   <button
@@ -558,7 +645,7 @@ export default function Convert() {
                       setInspectError(null);
                     }}
                   >
-                    Elegir otra carpeta…
+                    Cambiar selección
                   </button>
                 </div>
                 <div className="files">
@@ -579,28 +666,77 @@ export default function Convert() {
             ) : (
               <div key="empty" style={{ display: "contents" }}>
                 <div className="head">
-                  <b>Suelta una carpeta aquí</b>
-                  <span>o pega una ruta</span>
+                  <b>Suelta archivos o carpetas aquí</b>
+                  <span>o elígelos abajo</span>
                 </div>
-                <form
-                  className="pickrow"
-                  onSubmit={submitInputPath}
-                  style={{ display: "flex", gap: 8 }}
-                >
-                  <input
-                    type="text"
-                    placeholder="/ruta/a/tu/carpeta"
-                    value={inputPath}
+
+                <div className="pickbtns">
+                  <button type="button" className="btn" onClick={() => pickPaths("file")} disabled={inspecting}>
+                    Elegir archivos…
+                  </button>
+                  <button type="button" className="btn" onClick={() => pickPaths("folder")} disabled={inspecting}>
+                    Elegir carpeta…
+                  </button>
+                </div>
+
+                <form className="pickrow" onSubmit={submitManualPaths} style={{ flexDirection: "column", alignItems: "stretch" }}>
+                  <textarea
+                    rows={2}
+                    placeholder="/ruta/a/un/archivo.pdf o una carpeta"
+                    value={manualDraft}
                     disabled={inspecting}
                     onChange={(e) => {
-                      setInputPath(e.target.value);
+                      setManualDraft(e.target.value);
                       if (inspectError) setInspectError(null);
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        submitManualPaths();
+                      }
+                    }}
                   />
-                  <button type="button" className="btn" onClick={pickFolder} disabled={inspecting}>
-                    Elegir…
+                  <button
+                    type="submit"
+                    className="btn ghost small"
+                    style={{ alignSelf: "flex-end", marginTop: 6 }}
+                    disabled={inspecting || !manualDraft.trim()}
+                  >
+                    Añadir a la selección
                   </button>
                 </form>
+
+                {dropUnsupported && (
+                  <div className="more" style={{ color: "var(--warn)" }}>
+                    Tu navegador no permite arrastrar archivos con su ruta completa desde el Finder — usa «Elegir archivos…»/«Elegir
+                    carpeta…» o pega la ruta arriba.
+                  </div>
+                )}
+
+                {pendingPaths.length > 0 && (
+                  <>
+                    <div className="chiprow">
+                      {pendingPaths.map((p) => (
+                        <span className="chip" key={p}>
+                          <span title={p}>{fileName(p)}</span>
+                          <button type="button" aria-label={`Quitar ${fileName(p)} de la selección`} onClick={() => removePendingPath(p)}>
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn hl small"
+                      style={{ justifySelf: "start" }}
+                      disabled={inspecting}
+                      onClick={() => runInspect(pendingPaths)}
+                    >
+                      {inspecting ? "Inspeccionando…" : `Inspeccionar ${plural(pendingPaths.length, "elemento")} →`}
+                    </button>
+                  </>
+                )}
+
                 {inspecting && <div className="more">Inspeccionando…</div>}
                 {inspectError && (
                   <div className="more" style={{ color: "var(--bad, #c0392b)" }}>
@@ -621,6 +757,11 @@ export default function Convert() {
                 onChange={(e) => setOutputPath(e.target.value)}
                 placeholder="/ruta/de/salida"
               />
+              {inspect?.multi_root && (
+                <div className="more" style={{ marginTop: 2 }}>
+                  Una sola carpeta de salida para toda la selección.
+                </div>
+              )}
             </div>
             <button
               className="btn ghost small"

@@ -70,28 +70,41 @@ CLI (twomarkdown.cli) → paths → processor → walker (optional zip explode, 
   arbitrary user folders chosen from a native picker, none of which a
   container can give it. `make app` therefore runs `uv run uvicorn
   twomarkdown.server:app` directly on the host (backgrounded, torn down by a
-  trap on exit) alongside `bun dev` in `app/`; `make app-web` and
-  `make app-build` cover the frontend alone. This is the one place `uv run`
-  on the host is allowed to install into a native venv from `uv.lock` — it
-  never adds or changes a dependency, so it does not violate "never `uv
-  add`/`lock`/`sync` on the host" above. `make app` refuses to start (rather
+  trap on exit) alongside `bun dev --port $(APP_WEB_PORT) --strictPort` in
+  `app/`, printing the API (`http://127.0.0.1:$(APP_API_PORT)`) and web
+  (`http://localhost:$(APP_WEB_PORT)`) URLs once both are up; `make app-web`
+  and `make app-build` cover the frontend alone. This is the one place `uv
+  run` on the host is allowed to install into a native venv from `uv.lock` —
+  it never adds or changes a dependency, so it does not violate "never `uv
+  add`/`lock`/`sync` on the host" above. **Ports are configurable** —
+  `APP_WEB_PORT` (default `5173`) and `APP_API_PORT` (default `8765`) are
+  Makefile vars, e.g. `make app APP_WEB_PORT=5180`, needed because a Vite
+  dev server on the default `5173` collides with other Vite projects on the
+  same machine. The Makefile exports `VITE_API_TARGET=http://127.0.0.1:$(APP_API_PORT)`
+  when it runs vite, and `app/vite.config.ts`'s `/api` proxy (both the HTTP
+  and the websocket leg) reads that env var so it always targets the right
+  API port instead of a hardcoded one. `make app` refuses to start (rather
   than uvicorn/vite erroring out confusingly, or worse, silently talking to
-  whatever already owns the port) when 8765 or 5173 is already bound,
-  naming the owning PID and command (`lsof`) and pointing at `make
-  app-down`, which kills only this repo's own `uvicorn twomarkdown.server`
-  and `app/`-rooted vite dev processes (matched by port + cwd, not by
-  command name alone, so another checkout of this same repo is left
-  alone) — for the case its own trap didn't run (a killed terminal, a
-  crashed shell).
+  whatever already owns the port) when `APP_API_PORT` or `APP_WEB_PORT` is
+  already bound, naming the owning PID and command (`lsof`) and pointing at
+  `make app-down`, which kills only this repo's own `uvicorn
+  twomarkdown.server` and `app/`-rooted vite dev processes (matched by port
+  + cwd, not by command name alone, so another checkout of this same repo
+  is left alone) — for the case its own trap didn't run (a killed terminal,
+  a crashed shell). The FastAPI server's CORS allow-list
+  (`twomarkdown/server/app.py`, `allow_origins=["http://localhost:5173"]`)
+  is still hardcoded to the default web port and does not yet follow
+  `APP_WEB_PORT` — see that file, which this app-side change does not own.
 - **Sibling output folder, not in-place overwrite** — avoids clobbering sources and makes skip-by-mtime possible.
 - **Zips become folders in the output tree** — members are staged under `.unzipped/` (not under the input path), then mirrored without that prefix so a zip is not a conversion unit. Only `*.zip` is exploded; EPUB and Office/iWork zip containers stay intact. Sniffing retries iCloud `EDEADLK` locks instead of aborting the batch.
 - **Magic bytes beat a lying extension** — a PNG named `Foto.pdf` is OCR'd as an image, not sent through the PDF pipeline.
 - **LibreOffice ships in the image** — `.doc`/`.ppt`/`.xls`/`.odt`/`.rtf` convert via headless Writer/Calc/Impress; the image is larger because of that.
 - **`--ocr-backend=ollama` implies LLM** — a second `--llm-enabled` gate caused silent Tesseract fallback.
 - **PDF OCR is per page** — a mixed PDF with some extractable text used to skip scans entirely. OCR is prose under `## Page N`, not fenced code.
+- **pdf-inspector routes pages, it does not transcribe** — `extract_pages_markdown` classifies each page and supplies native markdown for digital pages; only `needs_ocr` pages are rasterized. Printed table pages flagged by the inspector, and every other scan, go through Tesseract first. The vision model runs only when that reading is weak, symbol soup, or a nearly wordless page covered in ink. Scanned tables with ruled lines can be promoted to the Tesseract route via a cheap grid check on the render. pdf-inspector's own OCR runtime is never loaded. If the import or call fails, MarkItDown + PyMuPDF behave as before.
 - **Native e-readers, not only MarkItDown** — EPUB spine order and FB2/MOBI needed their own module. EPUBs are copied onto local disk before parsing because Docker bind-mounts of iCloud Drive often break `zipfile` seek (`Bad Zip file`).
 - **Ollama is not stopped by `make down`** — tearing down Docker must not kill a host daemon other tools use (`make stop-ollama` is explicit).
-- **Tesseract then vision, on confidence not emptiness** — PDF page OCR used to keep any non-empty Tesseract text, so handwriting (confident nonsense) never reached the vision model and `--ocr-backend=ollama` changed nothing. Pages below `pdf_ocr_llm_min_confidence` are now re-OCR'd by the vision model, falling back to the Tesseract text if the model declines. One vision request is in flight at a time so parallel PDF workers cannot stampede host Ollama.
+- **Tesseract then vision, on confidence not emptiness** — PDF page OCR used to keep any non-empty Tesseract text, so handwriting never reached the vision model. A later change sent every scan straight to the model whenever one was configured. Measured on `ocr-lab` at 300 dpi, handwriting tops out at 52 and printed pages rasterized as images stay at 82 or above, so `pdf_ocr_llm_min_confidence` (75) keeps the print and sends the handwriting on. Symbol soup (`is_scrambled_text`) and a page with fewer than `tesseract_graphic_min_words` words whose pixels are mostly ink still escalate. The model is skipped only for a shredded text layer or `--force-ocr`. If it returns nothing, the Tesseract text is kept. One vision request is in flight at a time so parallel PDF workers cannot stampede host Ollama.
 - **Figures are regions, not embedded images** — engineering slides draw plots and circuits as vector strokes, so `get_images()` returns nothing and the text layer keeps only loose axis ticks. `converter/figures.py` clusters vector drawings and raster rects into regions, renders each from the page, and places it under its own `## Page N` with an optional generated description. The flat trailing `## Embedded images` index is only emitted when the figure pass produced nothing.
 - **A ruled box is not a table** — `find_tables()` reports the slide frame, so every slide's body was duplicated into a one-cell "table". Regions with fewer than two populated columns, an over-long cell, or near-page area are rejected, and tables are sorted by position because `find_tables()` ordering is not stable between runs.
 - **PDF text artifacts are repaired, not passed through** — LaTeX PDFs emit ligatures and big math delimiters as C0 control codes and accents as separate glyphs, so "flujo" arrived as "\x1dujo" and "Módulo" as "M´odulo"; a stray NUL also made the `.md` file binary to git. `clean.repair_pdf_text_artifacts` maps the known codes, composes the accents, and drops anything still unmapped.

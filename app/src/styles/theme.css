@@ -729,8 +729,60 @@ select.pick {
   display: flex;
   gap: 8px;
 }
-.pickrow input {
+.pickrow input,
+.pickrow textarea {
   flex: 1;
+  font: inherit;
+  resize: vertical;
+}
+.pickbtns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 4px 6px 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--sunk);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+}
+.chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.chip button {
+  border: none;
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  padding: 0;
+}
+.chip button:hover,
+.chip button:focus-visible {
+  color: var(--bad);
+  background: var(--bad-soft);
 }
 .presets {
   display: grid;

@@ -406,6 +406,47 @@ class TestSystem:
 
 
 # ---------------------------------------------------------------------------
+# CORS (app.add_middleware(CORSMiddleware, ...))
+# ---------------------------------------------------------------------------
+
+
+class TestCORS:
+    @pytest.mark.anyio
+    async def test_a_non_default_localhost_web_port_preflight_is_accepted(
+        self, client: AsyncClient
+    ) -> None:
+        """The web UI's port is configurable (`make app APP_WEB_PORT=5180`), so
+        the allowed origins can't be the single hardcoded 5173 the CORS
+        middleware used to carry — any localhost/127.0.0.1 port must pass a
+        preflight, or the browser blocks every request from a non-default
+        port before it ever reaches the server."""
+        resp = await client.options(
+            "/api/system",
+            headers={
+                "Origin": "http://localhost:5180",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.headers["access-control-allow-origin"] == "http://localhost:5180"
+
+    @pytest.mark.anyio
+    async def test_an_unrelated_origin_preflight_is_rejected(
+        self, client: AsyncClient
+    ) -> None:
+        """The allow list must stay scoped to localhost/127.0.0.1 — a random
+        external origin must not get an Allow-Origin echoed back."""
+        resp = await client.options(
+            "/api/system",
+            headers={
+                "Origin": "http://evil.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert "access-control-allow-origin" not in resp.headers
+
+
+# ---------------------------------------------------------------------------
 # GET/PUT /api/presets
 # ---------------------------------------------------------------------------
 
@@ -1094,6 +1135,50 @@ class TestInspectAndEstimate:
             assert full[key] == pipeline_only[key]
 
     @pytest.mark.anyio
+    async def test_inspect_a_multi_path_selection_across_two_folders(
+        self, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        """POST /api/inspect — `paths` (a multi-file/folder selection, not
+        one walked directory) inspects every entry, deduped and combined,
+        and reports the selection's shape via `multi_root`/`paths`/`root`."""
+        folder_a = tmp_path / "folder_a"
+        folder_b = tmp_path / "folder_b"
+        folder_a.mkdir()
+        folder_b.mkdir()
+        f1 = folder_a / "one.txt"
+        f2 = folder_a / "two.txt"
+        f3 = folder_b / "three.txt"
+        f1.write_text("one")
+        f2.write_text("two")
+        f3.write_text("three")
+
+        resp = await client.post(
+            "/api/inspect", json={"paths": [str(f1), str(f2), str(f3)]}
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["totals"]["files"] == 3
+        assert data["multi_root"] is True
+        assert set(data["paths"]) == {str(f1), str(f2), str(f3)}
+        assert data["root"] == str(tmp_path)
+
+    @pytest.mark.anyio
+    async def test_inspect_path_and_paths_together_is_422(
+        self, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        """POST /api/inspect — `path` and `paths` are mutually exclusive."""
+        f = tmp_path / "notes.txt"
+        f.write_text("hello")
+
+        resp = await client.post(
+            "/api/inspect", json={"path": str(f), "paths": [str(f)]}
+        )
+
+        assert resp.status_code == 422
+        assert "mutually exclusive" in resp.json()["detail"]
+
+    @pytest.mark.anyio
     async def test_estimate_a_plain_text_file_costs_nothing(
         self, client: AsyncClient, tmp_path: Path
     ) -> None:
@@ -1194,6 +1279,129 @@ class TestJobs:
         assert data["ok"] == 2
         assert (out / "a.md").exists()
         assert (out / "b.md").exists()
+
+    @pytest.mark.anyio
+    async def test_multi_path_selection_converts_exactly_the_selected_files(
+        self, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        """POST /api/jobs — a `paths` selection (3 files across 2 different
+        folders) converts exactly those files, not their whole parent
+        folder(s): a 4th file left out of the selection must not appear in
+        the output."""
+        folder_a = tmp_path / "folder_a"
+        folder_b = tmp_path / "folder_b"
+        folder_a.mkdir()
+        folder_b.mkdir()
+        f1 = folder_a / "one.txt"
+        f2 = folder_a / "two.txt"
+        f3 = folder_b / "three.txt"
+        left_out = folder_a / "left_out.txt"
+        f1.write_text("one")
+        f2.write_text("two")
+        f3.write_text("three")
+        left_out.write_text("not selected")
+        out = tmp_path / "out"
+
+        inspect_resp = await client.post(
+            "/api/inspect", json={"paths": [str(f1), str(f2), str(f3)]}
+        )
+        assert inspect_resp.status_code == 200
+        inspect_data = inspect_resp.json()
+        assert inspect_data["totals"]["files"] == 3
+        assert inspect_data["multi_root"] is True
+
+        estimate_resp = await client.post(
+            "/api/estimate",
+            json={
+                "inspect_id": inspect_data["inspect_id"],
+                "pipeline": Pipeline(ocr_model="tesseract").model_dump(),
+            },
+        )
+        assert estimate_resp.status_code == 200
+
+        resp = await client.post(
+            "/api/jobs",
+            json={
+                "paths": [str(f1), str(f2), str(f3)],
+                "output": str(out),
+                "pipeline": Pipeline(ocr_model="tesseract").model_dump(),
+            },
+        )
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        data = await _wait_for_job(client, job_id)
+        assert data["status"] == "done"
+        assert data["ok"] == 3
+        # Output paths mirror the selection's own structure under their
+        # common ancestor (`folder_a`/`folder_b`), same as a single folder
+        # input always mirrors its subdirectories.
+        assert (out / "folder_a" / "one.md").exists()
+        assert (out / "folder_a" / "two.md").exists()
+        assert (out / "folder_b" / "three.md").exists()
+        assert not (out / "folder_a" / "left_out.md").exists()
+
+    @pytest.mark.anyio
+    async def test_multi_path_selection_job_from_inspect_id_alone(
+        self, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        """POST /api/jobs — an `inspect_id` alone, from a `multi_root`
+        inspection, resolves to that inspection's own `paths` (the selected
+        entries), not to `root` (their common ancestor) — otherwise the job
+        would convert every file under the shared parent, not just the ones
+        selected."""
+        folder_a = tmp_path / "folder_a"
+        folder_b = tmp_path / "folder_b"
+        folder_a.mkdir()
+        folder_b.mkdir()
+        f1 = folder_a / "one.txt"
+        f2 = folder_b / "two.txt"
+        left_out = folder_a / "left_out.txt"
+        f1.write_text("one")
+        f2.write_text("two")
+        left_out.write_text("not selected")
+        out = tmp_path / "out"
+
+        inspect_data = (
+            await client.post("/api/inspect", json={"paths": [str(f1), str(f2)]})
+        ).json()
+
+        resp = await client.post(
+            "/api/jobs",
+            json={
+                "inspect_id": inspect_data["inspect_id"],
+                "output": str(out),
+                "pipeline": Pipeline(ocr_model="tesseract").model_dump(),
+            },
+        )
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        data = await _wait_for_job(client, job_id)
+        assert data["status"] == "done"
+        assert data["ok"] == 2
+        assert not (out / "left_out.md").exists()
+
+    @pytest.mark.anyio
+    async def test_job_path_and_paths_together_is_422(
+        self, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        """POST /api/jobs — `path` and `paths` are mutually exclusive."""
+        src = tmp_path / "in.txt"
+        src.write_text("hello")
+
+        resp = await client.post(
+            "/api/jobs",
+            json={
+                "path": str(src),
+                "paths": [str(src)],
+                "output": str(tmp_path / "out"),
+                "pipeline": Pipeline(ocr_model="tesseract").model_dump(),
+            },
+        )
+
+        assert resp.status_code == 422
+        assert "mutually exclusive" in resp.json()["detail"]
 
     @pytest.mark.anyio
     async def test_usd_is_null_when_a_cloud_call_could_not_be_priced(
@@ -1813,7 +2021,9 @@ class TestJobs:
         monkeypatch.setattr(conversion_config, "ocr_backend", "ollama")
         monkeypatch.setattr(
             "twomarkdown.converter.ocr.ocr_image_bytes",
-            lambda image_bytes, ocr_fn=None, force_llm=False: r"new text \( f(x) \)",
+            lambda image_bytes, ocr_fn=None, force_llm=False, **_kwargs: (
+                r"new text \( f(x) \)"
+            ),
         )
         monkeypatch.setattr(
             "twomarkdown.agents.page_review.review_enabled", lambda: False
@@ -1898,7 +2108,7 @@ class TestJobs:
         monkeypatch.setattr(conversion_config, "ocr_backend", "ollama")
         monkeypatch.setattr(
             "twomarkdown.converter.ocr.ocr_image_bytes",
-            lambda image_bytes, ocr_fn=None, force_llm=False: "new text",
+            lambda image_bytes, ocr_fn=None, force_llm=False, **_kwargs: "new text",
         )
         monkeypatch.setattr(
             "twomarkdown.agents.page_review.review_enabled", lambda: False
@@ -1970,7 +2180,9 @@ class TestJobs:
         monkeypatch.setattr(conversion_config, "ocr_backend", "ollama")
         monkeypatch.setattr(
             "twomarkdown.converter.ocr.ocr_image_bytes",
-            lambda image_bytes, ocr_fn=None, force_llm=False: "fresh ocr text",
+            lambda image_bytes, ocr_fn=None, force_llm=False, **_kwargs: (
+                "fresh ocr text"
+            ),
         )
         monkeypatch.setattr(
             "twomarkdown.agents.page_review.review_enabled", lambda: False
@@ -3442,6 +3654,78 @@ class TestOpen:
         )
         resp = await client.post("/api/reveal", json={"path": "/etc/shadow"})
         assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# POST /api/pick-paths — native multi-select (host.pick_paths)
+# ---------------------------------------------------------------------------
+
+
+class TestPickPaths:
+    @pytest.mark.anyio
+    async def test_kind_file_forwards_to_host_pick_paths(
+        self, client: AsyncClient, monkeypatch
+    ) -> None:
+        calls: list[str] = []
+
+        def fake_pick_paths(kind: str) -> list[str]:
+            calls.append(kind)
+            return ["/tmp/a.txt", "/tmp/b.txt"]
+
+        monkeypatch.setattr(host, "pick_paths", fake_pick_paths)
+        resp = await client.post("/api/pick-paths", json={"kind": "file"})
+        assert resp.status_code == 200
+        assert resp.json() == {"paths": ["/tmp/a.txt", "/tmp/b.txt"]}
+        assert calls == ["file"]
+
+    @pytest.mark.anyio
+    async def test_kind_folder_forwards_to_host_pick_paths(
+        self, client: AsyncClient, monkeypatch
+    ) -> None:
+        calls: list[str] = []
+
+        def fake_pick_paths(kind: str) -> list[str]:
+            calls.append(kind)
+            return ["/tmp/some-folder"]
+
+        monkeypatch.setattr(host, "pick_paths", fake_pick_paths)
+        resp = await client.post("/api/pick-paths", json={"kind": "folder"})
+        assert resp.status_code == 200
+        assert resp.json() == {"paths": ["/tmp/some-folder"]}
+        assert calls == ["folder"]
+
+    @pytest.mark.anyio
+    async def test_default_kind_is_folder(
+        self, client: AsyncClient, monkeypatch
+    ) -> None:
+        calls: list[str] = []
+        monkeypatch.setattr(host, "pick_paths", lambda kind: calls.append(kind) or [])
+        resp = await client.post("/api/pick-paths", json={})
+        assert resp.status_code == 200
+        assert calls == ["folder"]
+
+    @pytest.mark.anyio
+    async def test_cancel_returns_empty_paths(
+        self, client: AsyncClient, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(host, "pick_paths", lambda kind: [])
+        resp = await client.post("/api/pick-paths", json={"kind": "file"})
+        assert resp.status_code == 200
+        assert resp.json() == {"paths": []}
+
+    @pytest.mark.anyio
+    async def test_non_macos_none_returns_empty_paths_not_an_error(
+        self, client: AsyncClient, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(host, "pick_paths", lambda kind: None)
+        resp = await client.post("/api/pick-paths", json={"kind": "folder"})
+        assert resp.status_code == 200
+        assert resp.json() == {"paths": []}
+
+    @pytest.mark.anyio
+    async def test_invalid_kind_is_rejected(self, client: AsyncClient) -> None:
+        resp = await client.post("/api/pick-paths", json={"kind": "bogus"})
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------

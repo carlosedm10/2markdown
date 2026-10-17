@@ -44,7 +44,7 @@ import fitz
 
 from twomarkdown.batch import events, gpu_memory
 from twomarkdown.batch.processor import plan_output_paths, process_batch
-from twomarkdown.batch.walker import discover_files
+from twomarkdown.batch.walker import discover_files, discover_selection
 from twomarkdown.config import (
     DEFAULT_INCLUDE_EXTENSIONS,
     IWORK_BUNDLE_SUFFIXES,
@@ -228,16 +228,46 @@ def _resolve_files(path: str, output: Path) -> tuple[Path, list[Path]]:
     return batch_root, files
 
 
+def _resolve_paths(paths: list[str], output: Path) -> tuple[Path, list[Path]]:
+    """(input_root, files) for a job's `paths` — a multi-path SELECTION
+    (several files and/or folders converted together), not one walked
+    directory.
+
+    `batch.walker.discover_selection` does the actual walk (each entry
+    resolved on its own, deduped, stably sorted) — the same helper
+    `batch.estimate.inspect_paths` uses for `POST /api/inspect`, so a job
+    created from a selection converts exactly the files that selection's own
+    inspection counted. `output` excludes the real output tree from any
+    directory entry's own walk, same as `_resolve_files` above does for a
+    single directory input. `input_root` is the selection's deepest common
+    ancestor directory (`twomarkdown.paths.common_ancestor` — same rule
+    `InspectResponse.root` uses for a multi-root selection), so
+    `plan_output_paths`/`_mirror_output_path` can compute every file's
+    output path relative to one shared root even when the selection spans
+    more than one folder.
+    """
+    from twomarkdown.paths import common_ancestor
+
+    resolved_roots = [Path(p).resolve() for p in paths]
+    files = discover_selection(paths, output_dir=output)
+    return common_ancestor(resolved_roots), files
+
+
 def _resolve_job_input(
-    *, path: str | None, inspect_id: str | None, output: Path
+    *, path: str | None, paths: list[str] | None, inspect_id: str | None, output: Path
 ) -> tuple[Path, list[Path]]:
+    if paths is not None:
+        return _resolve_paths(paths, output)
     if path is not None:
         return _resolve_files(path, output)
     # `server/app.py`'s `POST /api/jobs` always resolves an `inspect_id`-only
-    # request into `path` first — `InspectResponse.root`, the walked root
-    # `twomarkdown.batch.estimate.inspect()` recorded — before calling
-    # `create_job`, so this is only reached by a caller that skips that step.
-    raise ValueError(f"inspect_id {inspect_id!r} needs `path` (no root resolved)")
+    # request into `path`/`paths` first (`InspectResponse.root`/`.paths`, the
+    # walked root(s) `twomarkdown.batch.estimate.inspect()` recorded) before
+    # calling `create_job`, so this is only reached by a caller that skips
+    # that step.
+    raise ValueError(
+        f"inspect_id {inspect_id!r} needs `path` or `paths` (no root resolved)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -656,6 +686,7 @@ def create_job(
     pipeline: Pipeline,
     mode: str,
     preset_id: str | None = None,
+    paths: list[str] | None = None,
 ) -> Job:
     output_dir = Path(output).expanduser()
     if not output_dir.is_absolute():
@@ -665,7 +696,7 @@ def create_job(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     input_root, files = _resolve_job_input(
-        path=path, inspect_id=inspect_id, output=output_dir
+        path=path, paths=paths, inspect_id=inspect_id, output=output_dir
     )
     # Same map `process_batch` itself computes from these same inputs — kept
     # on the `_Runtime`, not written onto `JobFileState.output_path` yet (see
@@ -682,7 +713,8 @@ def create_job(
         output=str(output_dir),
         pipeline=pipeline,
         mode=mode,
-        input=path if path is not None else str(input_root),
+        input=path if path is not None else (None if paths else str(input_root)),
+        paths=paths,
         preset_id=preset_id,
         files=[
             JobFileState(
@@ -798,10 +830,15 @@ def _rehydrate_runtime(job_id: str) -> _Runtime | None:
     single-file job that is the file's *parent* directory, not the file
     itself (a plain `Path(job.input)` here made every relative-path
     computation in `_output_path_for`/`process_batch` collapse to "." and
-    raise, since `source.relative_to(source)` is empty). Good enough for as
-    long as the job's own files still live where they did — a moved/deleted
-    source file simply fails that one operation, same as it would for a job
-    still in memory.
+    raise, since `source.relative_to(source)` is empty). A multi-path
+    selection (`Job.paths`, `Job.input` left `None` by `create_job`) instead
+    re-derives its common ancestor directly, the same rule
+    `_resolve_paths`/`InspectResponse.root` use — `Job.files[]` (not a fresh
+    walk) is still what supplies the actual file list either way, so this
+    only ever needs `input_root` back for relative-path math. Good enough for
+    as long as the job's own files still live where they did — a moved/
+    deleted source file simply fails that one operation, same as it would
+    for a job still in memory.
     """
     record = _find_history_raw(job_id)
     if record is None:
@@ -811,7 +848,11 @@ def _rehydrate_runtime(job_id: str) -> _Runtime | None:
     except Exception as exc:
         logger.warning("Could not rehydrate job %s from history: %s", job_id, exc)
         return None
-    if job.input:
+    if job.paths:
+        from twomarkdown.paths import common_ancestor
+
+        input_root = common_ancestor([Path(p) for p in job.paths])
+    elif job.input:
         input_root, _default_out, _only_files = normalize_batch_input(
             Path(job.input).expanduser()
         )
@@ -1332,7 +1373,11 @@ def _retry_single_page(rt: _Runtime, file_index: int, page: int) -> None:
     )
     from twomarkdown.converter import ocr as ocr_mod
     from twomarkdown.converter.clean import clean_markdown
-    from twomarkdown.converter.pdf_ocr import _render_page_pixmap
+    from twomarkdown.converter.pdf_ocr import (
+        _force_llm_for_route,
+        _vision_model_available,
+    )
+    from twomarkdown.converter.pdf_route import effective_route, inspect_pdf
 
     source = rt.files[file_index]
     if source.suffix.lower() != ".pdf":
@@ -1359,16 +1404,39 @@ def _retry_single_page(rt: _Runtime, file_index: int, page: int) -> None:
     else:
         ocr_fn = ocr_mod.extract_text_with_tesseract
 
+    inspection = inspect_pdf(source)
+    routes = inspection.routes if inspection is not None else None
     with fitz.open(source) as doc:
         if not (1 <= page <= doc.page_count):
             raise IndexError(page)
-        png_bytes = _render_page_pixmap(doc, page - 1)
+        page_pix = doc[page - 1].get_pixmap(
+            matrix=fitz.Matrix(
+                pdf_ocr_config.pdf_ocr_dpi / 72.0,
+                pdf_ocr_config.pdf_ocr_dpi / 72.0,
+            ),
+            alpha=False,
+        )
+        route = effective_route(page, routes, pixmap=page_pix)
+        try:
+            png_bytes = page_pix.tobytes("png")
+        finally:
+            page_pix = None
+
+    vision_available = (
+        conversion_config.ocr_backend == "ollama" and _vision_model_available()
+    )
+    force_llm = (
+        _force_llm_for_route(route, scrambled=False, vision_available=vision_available)
+        if route is not None
+        else pdf_ocr_config.pdf_ocr_force
+    )
 
     with events.stage("ocr", page=page):
         text = ocr_mod.ocr_image_bytes(
             png_bytes,
             ocr_fn=ocr_fn,
-            force_llm=conversion_config.ocr_backend == "ollama",
+            llm_min_confidence=pdf_ocr_config.pdf_ocr_llm_min_confidence,
+            force_llm=force_llm,
         ).strip()
 
     changes: list[dict[str, Any]] = []

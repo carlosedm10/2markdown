@@ -120,7 +120,17 @@ export interface SystemInfo {
 // ---------------------------------------------------------------------------
 
 export interface InspectRequest {
-  path: string;
+  /** Exactly one of `path`/`paths` — mirrors `twomarkdown/server/
+   * schemas.py:InspectRequest` field-for-field: the server 422s a request
+   * that sends both, or neither. `path` is the legacy single-file/folder
+   * shape; every call site in this app (Convert.tsx's `runInspect`) sends
+   * `paths` instead, even for a selection of one, so there is exactly one
+   * code path to maintain. Kept here (rather than dropped) only because it
+   * is still a valid, currently-unused shape a future caller could pick. */
+  path?: string | null;
+  /** The whole selection — one entry for the everyday single-file/folder
+   * case, more for a multi-selection. */
+  paths?: string[] | null;
 }
 
 export interface InspectFile {
@@ -128,6 +138,10 @@ export interface InspectFile {
   kind: FileKind;
   pages: number;
   scanned_pages: number;
+  /** Pages routed to the vision model (excludes Tesseract table pages). */
+  vision_ocr_pages: number;
+  /** Native pages that get format_math instead of vision OCR. */
+  math_pages: number;
   figures: number;
   text_chars: number;
   bytes: number;
@@ -137,6 +151,8 @@ export interface InspectTotals {
   files: number;
   pages: number;
   scanned_pages: number;
+  vision_ocr_pages: number;
+  math_pages: number;
   figures: number;
   bytes: number;
 }
@@ -145,7 +161,9 @@ export interface InspectResponse {
   inspect_id: string;
   files: InspectFile[];
   totals: InspectTotals;
-  /** The folder/file that was inspected. */
+  /** The folder/file that was inspected. With a multi-selection request
+   * this is still one root (the resolved common/first one) — see `paths`
+   * and `multi_root` for the full selection. */
   root: string;
   /** The preset last used for this exact folder, from the engine's
    * per-folder memory (GET/DELETE /api/folders). `null` the first time a
@@ -153,8 +171,19 @@ export interface InspectResponse {
   last_preset_id?: string | null;
   /** Server-resolved output path for this folder/file, computed from
    * `Settings.default_output_mode`/`default_output_dir` — never re-derived
-   * client-side (see Settings below and Convert.tsx). */
+   * client-side (see Settings below and Convert.tsx). With `multi_root` this
+   * is the ONE output folder the whole selection converts into. */
   default_output: string;
+  /** Every root path the server actually walked, echoing (and possibly
+   * expanding, e.g. a folder → its own root) `InspectRequest.paths`.
+   * Optional/absent on a server that predates multi-selection — Convert.tsx
+   * then treats this inspect as single-root, same as before. */
+  paths?: string[];
+  /** True when this inspect covered more than one top-level file/folder —
+   * the UI then shows "N archivos de M carpetas" instead of the single-root
+   * wording, and makes clear `default_output` is one shared output folder
+   * for the whole selection. Optional/absent degrades to `false`. */
+  multi_root?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +412,12 @@ export interface EstimateResponse {
 export interface JobCreateRequest {
   inspect_id?: string | null;
   path?: string | null;
+  /** Multi-selection sibling of `path`, for creating a job straight from a
+   * selection without a prior `/api/inspect` (Convert.tsx always goes
+   * through `inspect_id` instead — see its `startConversion` — so this is
+   * here only for API-shape completeness/forward-compat). Optional; an
+   * older server ignores it. */
+  paths?: string[] | null;
   output?: string | null;
   pipeline?: Pipeline | null;
   preset_id?: string | null;
