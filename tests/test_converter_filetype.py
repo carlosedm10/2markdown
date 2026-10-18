@@ -86,8 +86,9 @@ class TestFiletypeSniffing:
                 raise OSError(errno.EDEADLK, "Resource deadlock avoided")
             return original_open(self, *args, **kwargs)
 
-        with patch.object(Path, "open", flaky), patch(
-            "twomarkdown.converter.filetype.time.sleep", return_value=None
+        with (
+            patch.object(Path, "open", flaky),
+            patch("twomarkdown.converter.filetype.time.sleep", return_value=None),
         ):
             assert _read_prefix(path).startswith(b"%PDF")
         assert attempts["n"] == 2

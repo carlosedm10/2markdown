@@ -152,7 +152,7 @@ Vision OCR is tens of seconds per page, so `file_timeout_sec` in `twomarkdown/co
 
 ## Configuration
 
-Feature flags and tuning live in [`twomarkdown/config.py`](twomarkdown/config.py). `.env` is secrets only (`make fresh-setup` copies `env_template`). `make build` / `make build ollama` write gitignored `.ocr-mode` instead of editing `config.py`.
+Feature flags and tuning live in [`twomarkdown/config.py`](twomarkdown/config.py). `.env` is secrets only (`make fresh-setup` copies `.env_template`). `make build` / `make build ollama` write gitignored `.ocr-mode` instead of editing `config.py`.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|

@@ -101,6 +101,15 @@ def convert(
         "--pdf-ocr/--no-pdf-ocr",
         help="OCR scanned PDFs when MarkItDown returns little text",
     ),
+    force_ocr: bool = typer.Option(
+        pdf_ocr_config.pdf_ocr_force,
+        "--force-ocr/--no-force-ocr",
+        help=(
+            "Vision-OCR every PDF page even when it already has a native text "
+            "layer ('releer con visión'); requires --pdf-ocr and a vision "
+            "backend (--ollama or --ocr-backend=ollama)"
+        ),
+    ),
     fetch_remote_images: bool = typer.Option(
         conversion_config.fetch_remote_images,
         "--fetch-remote-images/--no-fetch-remote-images",
@@ -126,17 +135,13 @@ def convert(
         None,
         "--workers",
         help=(
-            "Parallel file conversions "
-            f"(default: {conversion_config.parallel_workers})"
+            f"Parallel file conversions (default: {conversion_config.parallel_workers})"
         ),
     ),
     figure_model: str | None = typer.Option(
         None,
         "--figure-model",
-        help=(
-            "Vision model for figure captions "
-            f"(default: {llm_config.figure_model})"
-        ),
+        help=(f"Vision model for figure captions (default: {llm_config.figure_model})"),
     ),
     review_model: str | None = typer.Option(
         None,
@@ -219,6 +224,7 @@ def convert(
         conversion_config.parallel_workers = max(1, workers)
     llm_config.llm_enabled = llm_enabled
     pdf_ocr_config.pdf_ocr_enabled = pdf_ocr
+    pdf_ocr_config.pdf_ocr_force = force_ocr
 
     typer.echo(f"Input:  {input.resolve()}")
     typer.echo(f"Output: {resolved_output}")

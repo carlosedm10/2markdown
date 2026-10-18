@@ -32,10 +32,41 @@ logger = logging.getLogger(__name__)
 # timeout too small to finish one), while gpt-4o answers in ~5s and several
 # requests run at once. A local estimate applied to a hosted model overshot the
 # real time by 13x, so the two are split.
+#
+# The 32b figure is also the wrong number for the *other* local model this app
+# offers: qwen2.5vl:7b, a smaller/faster model this same estimator used to cost
+# at the 32b rate, overshooting a real ~62s run by ~3x and disagreeing with the
+# ~40s/página the setup wizard itself advertises for it (see N8 — the wizard's
+# own copy in `app/`, out of this module's reach, is the other half of "the same
+# constant" that fix note asks for). `LOCAL_SECONDS_PER_VLM_PAGE` stays the
+# conservative default for any local model not listed here.
 LOCAL_SECONDS_PER_VLM_PAGE = 150.0
 LOCAL_SECONDS_PER_FIGURE = 40.0
 REMOTE_SECONDS_PER_VLM_PAGE = 8.0
 REMOTE_SECONDS_PER_FIGURE = 4.0
+
+# Per-model overrides for the local rate above, keyed by the model name as it
+# appears after the "ollama:" provider prefix (see `normalize_model_id`).
+# Figures share the page rate here — this app's smaller local model is only
+# ever used at "qwen2.5vl:7b" resolution, and a figure crop is not meaningfully
+# cheaper to describe than a page at that size.
+_LOCAL_SECONDS_PER_VLM_PAGE_BY_MODEL: dict[str, float] = {
+    "qwen2.5vl:7b": 40.0,
+}
+
+
+def _local_rates(vision_model: str) -> tuple[float, float]:
+    # `vision_model` is normalized ("ollama:qwen2.5vl:7b"); strip only the
+    # leading provider, not every colon, so "qwen2.5vl:7b" survives intact.
+    model_name = (
+        vision_model[len("ollama:") :]
+        if vision_model.startswith("ollama:")
+        else vision_model
+    )
+    per_page = _LOCAL_SECONDS_PER_VLM_PAGE_BY_MODEL.get(
+        model_name, LOCAL_SECONDS_PER_VLM_PAGE
+    )
+    return per_page, LOCAL_SECONDS_PER_FIGURE
 
 
 def _rates() -> tuple[float, float]:
@@ -46,6 +77,7 @@ def _rates() -> tuple[float, float]:
 
         if not is_local_model(llm_config.vision_model):
             return REMOTE_SECONDS_PER_VLM_PAGE, REMOTE_SECONDS_PER_FIGURE
+        return _local_rates(llm_config.vision_model)
     except Exception:
         pass
     return LOCAL_SECONDS_PER_VLM_PAGE, LOCAL_SECONDS_PER_FIGURE
@@ -104,6 +136,7 @@ class BatchPlan:
 def _plan_pdf(path: Path) -> FilePlan | None:
     """Count the model-bound work in one PDF. None when it cannot be read."""
     from twomarkdown.converter.pdf_ocr import is_scrambled_text
+    from twomarkdown.converter.pdf_route import count_routes, inspect_pdf
 
     try:
         doc = fitz.open(path)
@@ -111,16 +144,20 @@ def _plan_pdf(path: Path) -> FilePlan | None:
         logger.debug("Plan skipped for %s: %s", path, exc)
         return None
 
+    inspection = inspect_pdf(path)
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
     vlm_pages = figures = 0
     try:
+        if inspection is not None:
+            _, _, vlm_pages = count_routes(inspection.routes)
         for page in doc:
-            try:
-                text = page.get_text().strip()
-            except Exception:
-                continue
-            if len(text) < min_chars or is_scrambled_text(text):
-                vlm_pages += 1
+            if inspection is None:
+                try:
+                    text = page.get_text().strip()
+                except Exception:
+                    continue
+                if len(text) < min_chars or is_scrambled_text(text):
+                    vlm_pages += 1
             if figure_config.figures_enabled and figure_config.describe_figures_llm:
                 try:
                     from twomarkdown.converter.figures import detect_figure_regions

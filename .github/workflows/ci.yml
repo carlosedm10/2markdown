@@ -18,7 +18,7 @@ jobs:
 
       # CI-shaped bootstrap: no Compose stack on the runner; Makefile uses native uv when CI=true.
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: make sync-ci
 
       - name: Lint
         run: make lint
@@ -37,10 +37,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install tesseract
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa
+        run: make tesseract-ci
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: make sync-ci
 
       - name: Integration tests
         run: make test-integration

@@ -55,4 +55,3 @@ class TestRasterizeSvg:
         with patch.dict("sys.modules", {"cairosvg": None}):
             with pytest.raises(RuntimeError, match="EXTRA=svg"):
                 rasterize_svg(Path(svg))
-

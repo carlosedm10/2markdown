@@ -369,9 +369,7 @@ class TestOcrImageBytesHybrid:
                 side_effect=tesseract,
             ),
         ):
-            result = ocr_image_bytes(
-                minimal_png_bytes, ocr_fn=ocr_fn, cancel=cancel
-            )
+            result = ocr_image_bytes(minimal_png_bytes, ocr_fn=ocr_fn, cancel=cancel)
 
         assert result == ""
         ocr_fn.assert_not_called()

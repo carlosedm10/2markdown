@@ -9,8 +9,10 @@ from unittest.mock import patch
 
 import fitz
 import pytest
+from tqdm import tqdm
 
 from twomarkdown.batch.processor import _compose_pdf, process_batch
+from twomarkdown.converter import ocr as ocr_mod
 from twomarkdown.converter.markitdown_converter import ConversionError
 
 
@@ -58,6 +60,36 @@ class TestBatchProcessor:
         assert (output_dir / "good.md").exists()
         assert not (output_dir / "bad.md").exists()
         assert result.failed_paths == [str(bad.resolve())]
+
+    def test_process_batch_reports_a_warn_status_for_a_soft_failure(
+        self, batch_dirs: tuple[Path, Path]
+    ) -> None:
+        """process_batch() — B1/M5: a file whose LLM-backed stage was silently
+        skipped (unreachable local model, exhausted cloud quota) converts, but
+        must count as "warn", not plain "ok" — the output alone cannot tell
+        the caller it's not what was asked for."""
+        input_dir, output_dir = batch_dirs
+
+        src = input_dir / "note.txt"
+        src.write_text("hello")
+
+        def _flag_soft_failure(_path):
+            ocr_mod.record_soft_failure("OCR omitido: no se pudo conectar")
+            return "converted"
+
+        with patch(
+            "twomarkdown.converter.markitdown_converter.convert_file",
+            side_effect=_flag_soft_failure,
+        ):
+            result = process_batch(
+                input_dir, output_dir, skip_existing=False, ocr_enabled=False
+            )
+
+        assert result.converted == 1
+        assert result.warn == 1
+        assert result.warn_paths == [str(src.resolve())]
+        assert result.failed == 0
+        assert (output_dir / "note.md").exists()
 
     def test_process_batch_converts_standalone_png_via_ocr_fallback(
         self, batch_dirs: tuple[Path, Path], minimal_png_bytes: bytes
@@ -648,3 +680,94 @@ class TestPartialOutputOnTimeout:
 
         assert "presupuesto" not in banner
         assert "a.pdf" in banner
+
+
+class TestNoLeakedMultiprocessingSemaphore:
+    def test_tqdm_never_creates_a_real_multiprocessing_lock(self) -> None:
+        """`twomarkdown/__init__.py` preempts `tqdm`'s global write lock from
+        ever calling `multiprocessing.RLock()` — every progress bar in this
+        codebase (here and `converter/pdf_ocr.py`) runs on threads within one
+        process, so that lock protects nothing and, left alone, is exactly
+        what `multiprocessing.resource_tracker` reports as a leaked semaphore
+        at interpreter shutdown."""
+        from tqdm.std import TqdmDefaultWriteLock
+
+        assert TqdmDefaultWriteLock.mp_lock is None
+
+        # Instantiating a real progress bar (as every batch run does) must
+        # not create one either — `create_mp_lock()` only creates `mp_lock`
+        # when the class has no such attribute yet, and importing
+        # `twomarkdown` already gave it one (`None`).
+        bar = tqdm(total=1, disable=True)
+        try:
+            assert TqdmDefaultWriteLock.mp_lock is None
+        finally:
+            bar.close()
+
+
+class TestFigureModelCollapseWarningOnce:
+    """C18: `gpu_memory.effective_figure_model`'s collapse message must reach
+    the log exactly once per run, not once per figure captioned."""
+
+    def _pin_48gb_mac(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from twomarkdown.server import system
+
+        monkeypatch.setattr(system, "is_apple_silicon", lambda: True)
+        monkeypatch.setattr(system, "ram_gb", lambda: 48.0)
+        monkeypatch.setattr(
+            system, "ollama_info", lambda: system.OllamaInfo(running=False, models=[])
+        )
+
+    def test_cli_run_with_no_job_sink_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The CLI's `process_batch` call is its whole run (no `jobs.py`
+        wrapping it in a per-file loop), so with no sink attached this is
+        the one place the warning belongs — and it must fire only once even
+        if called again (a second CLI invocation-worth of config)."""
+        from twomarkdown.batch import events
+        from twomarkdown.batch.processor import _warn_once_if_figure_model_collapses
+        from twomarkdown.config import figure_config, llm_config
+
+        self._pin_48gb_mac(monkeypatch)
+        assert not events.has_sink()
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        monkeypatch.setattr(llm_config, "figure_model", "ollama:qwen2.5vl:7b")
+        monkeypatch.setattr(llm_config, "review_model", "")
+        monkeypatch.setattr(figure_config, "describe_figures_llm", True)
+
+        with caplog.at_level("WARNING"):
+            _warn_once_if_figure_model_collapses()
+
+        collapse_records = [
+            r for r in caplog.records if "no cabe junto al" in r.message
+        ]
+        assert len(collapse_records) == 1
+
+    def test_a_job_sink_defers_to_jobs_py_and_stays_silent(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """`twomarkdown.server.jobs._run_job` calls `process_batch` once per
+        *file* (see that module's own docstring), not once per job — logging
+        here as well would print the message once per file instead of once
+        per job, since `jobs.py` already logs it exactly once at job start.
+        Detected by whether a sink is attached (a server job always attaches
+        one before calling `process_batch`; the CLI never does)."""
+        from twomarkdown.batch import events
+        from twomarkdown.batch.processor import _warn_once_if_figure_model_collapses
+        from twomarkdown.config import figure_config, llm_config
+
+        self._pin_48gb_mac(monkeypatch)
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        monkeypatch.setattr(llm_config, "figure_model", "ollama:qwen2.5vl:7b")
+        monkeypatch.setattr(llm_config, "review_model", "")
+        monkeypatch.setattr(figure_config, "describe_figures_llm", True)
+
+        events.set_sink(lambda event: None)
+        try:
+            with caplog.at_level("WARNING"):
+                _warn_once_if_figure_model_collapses()
+        finally:
+            events.set_sink(None)
+
+        assert not any("no cabe junto al" in r.message for r in caplog.records)

@@ -345,9 +345,29 @@ class TestTransientBadResponse:
 
 
 class TestOneResidentLocalModel:
-    """Two local models do not fit one GPU; the second one OOMs the encoder."""
+    """Two local models fit one GPU only when the arithmetic says so — not
+    whenever both simply happen to be local (see `gpu_memory.
+    effective_figure_model`, shared with `batch/estimate.py`'s own copy)."""
 
-    def test_a_local_figure_model_reuses_the_page_model(self, monkeypatch) -> None:
+    def _pin_48gb_mac(self, monkeypatch) -> None:
+        """Every test below that expects the arithmetic to actually run pins
+        the 48 GB Mac / 36 GB GPU limit `docs/README.md`'s numbers were
+        measured on, and Ollama to "not running" so `resident_gb` always
+        falls back to the deterministic per-parameter-count table —
+        otherwise the real host running the suite (which may not even be
+        Apple Silicon) would decide the outcome instead of this test.
+        """
+        from twomarkdown.server import system
+
+        monkeypatch.setattr(system, "is_apple_silicon", lambda: True)
+        monkeypatch.setattr(system, "ram_gb", lambda: 48.0)
+        monkeypatch.setattr(
+            system, "ollama_info", lambda: system.OllamaInfo(running=False, models=[])
+        )
+
+    def test_a_local_figure_model_reuses_the_page_model_when_it_does_not_fit(
+        self, monkeypatch
+    ) -> None:
         """effective_figure_model() — one resident model, not two.
 
         29.1 GB for the page model plus 8.8 GB for a separate captioner exceeds
@@ -357,10 +377,90 @@ class TestOneResidentLocalModel:
         from twomarkdown.agents.image_ocr import effective_figure_model
         from twomarkdown.config import llm_config
 
+        self._pin_48gb_mac(monkeypatch)
         monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
         monkeypatch.setattr(llm_config, "figure_model", "ollama:qwen2.5vl:7b")
 
         assert effective_figure_model() == "ollama:qwen2.5vl:32b"
+
+    def test_collapsing_stays_silent_here_so_a_job_never_logs_it_per_figure(
+        self, monkeypatch
+    ) -> None:
+        """effective_figure_model() runs once per figure captioned, so it
+        must never itself be the thing that logs the collapse — a job with
+        many figures would otherwise print the same sentence once per
+        figure. It only resolves; the collapse is reported exactly once,
+        from the same config, at job start
+        (`twomarkdown.server.jobs._warn_if_figure_model_collapses`) or the
+        CLI's single run
+        (`twomarkdown.batch.processor._warn_once_if_figure_model_collapses`)
+        — see C18."""
+        from twomarkdown.agents import image_ocr
+        from twomarkdown.config import llm_config
+
+        self._pin_48gb_mac(monkeypatch)
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        monkeypatch.setattr(llm_config, "figure_model", "ollama:qwen2.5vl:7b")
+        logged: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            image_ocr.events,
+            "log",
+            lambda level, message: logged.append((level, message)),
+        )
+
+        for _ in range(3):
+            assert image_ocr.effective_figure_model() == "ollama:qwen2.5vl:32b"
+
+        assert logged == []
+
+    def test_a_local_pair_that_fits_is_not_collapsed(self, monkeypatch) -> None:
+        """effective_figure_model() — the UI's "fits" and the engine's own
+        choice must agree: qwen2.5vl:7b OCR (~8 GB) plus gemma3:4b figures
+        (~5 GB) sit well under a 36 GB GPU limit, so figures keep their own
+        model instead of silently falling back to the OCR model."""
+        from twomarkdown.agents.image_ocr import effective_figure_model
+        from twomarkdown.config import llm_config
+
+        self._pin_48gb_mac(monkeypatch)
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:7b")
+        monkeypatch.setattr(llm_config, "figure_model", "ollama:gemma3:4b")
+
+        assert effective_figure_model() == "ollama:gemma3:4b"
+
+    def test_a_local_figure_model_named_gemma_still_collapses_when_it_does_not_fit(
+        self, monkeypatch
+    ) -> None:
+        """M9: the collapse must apply to *any* local figure model, resolved
+        through `is_local_model` — never a name heuristic that only
+        recognises a "qwen" pair. 32b OCR (~29 GB) plus gemma3:4b figures
+        (~4.8 GB) does not fit a 30 GB GPU limit, so figures must fall back
+        to the OCR model here exactly as a same-size qwen pair already does
+        (see `test_a_local_figure_model_reuses_the_page_model_when_it_does_not_fit`
+        above)."""
+        from twomarkdown.agents.image_ocr import effective_figure_model
+        from twomarkdown.config import llm_config
+        from twomarkdown.server import system
+
+        monkeypatch.setattr(system, "is_apple_silicon", lambda: True)
+        monkeypatch.setattr(system, "ram_gb", lambda: 40.0)  # gpu_limit_gb -> 30.0
+        monkeypatch.setattr(
+            system, "ollama_info", lambda: system.OllamaInfo(running=False, models=[])
+        )
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        monkeypatch.setattr(llm_config, "figure_model", "ollama:gemma3:4b")
+
+        assert effective_figure_model() == "ollama:qwen2.5vl:32b"
+
+    def test_the_same_local_model_for_both_is_a_no_op(self, monkeypatch) -> None:
+        """effective_figure_model() — nothing to collapse when the two names
+        are the same Ollama tag; no arithmetic even runs."""
+        from twomarkdown.agents.image_ocr import effective_figure_model
+        from twomarkdown.config import llm_config
+
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:32b")
+        monkeypatch.setattr(llm_config, "figure_model", "qwen2.5vl:32b")
+
+        assert effective_figure_model() == "qwen2.5vl:32b"
 
     def test_a_hosted_figure_model_is_left_alone(self, monkeypatch) -> None:
         """effective_figure_model() — the constraint is the GPU, not the setting.
@@ -385,6 +485,30 @@ class TestOneResidentLocalModel:
         monkeypatch.setattr(llm_config, "figure_model", "ollama:qwen2.5vl:7b")
 
         assert effective_figure_model() == "ollama:qwen2.5vl:7b"
+
+
+class TestGpuPermitsKnob:
+    """`llm_config.local_gpu_permits` / `Settings.local_gpu_permits` —
+    `_page_ocr_lock`'s permit count, applied through `image_ocr.
+    apply_gpu_permits` (see `server/settings.py`'s `_apply_llm_settings`)."""
+
+    def test_apply_gpu_permits_resizes_the_lock(self, monkeypatch) -> None:
+        from twomarkdown.agents import image_ocr
+
+        image_ocr.apply_gpu_permits(2)
+        try:
+            assert image_ocr._page_ocr_lock.permits == 2
+        finally:
+            image_ocr.apply_gpu_permits(1)
+
+    def test_apply_gpu_permits_clamps_below_one(self, monkeypatch) -> None:
+        from twomarkdown.agents import image_ocr
+
+        image_ocr.apply_gpu_permits(0)
+        try:
+            assert image_ocr._page_ocr_lock.permits == 1
+        finally:
+            image_ocr.apply_gpu_permits(1)
 
 
 class TestPoisonedBackendRecovery:
@@ -496,3 +620,94 @@ class TestQuotaExhaustion:
 
         assert image_ocr._call_with_backoff(flaky, what="Page OCR") == "ok"
         assert len(calls) == 2
+
+
+class TestSoftFailureReporting:
+    """B1/M5: an unreachable local model or an exhausted cloud quota must
+    surface as a visible warning, not a silent Tesseract fallback (or empty
+    caption) presented as an ordinary success."""
+
+    def test_connection_error_on_a_local_model_is_recognised(self) -> None:
+        from twomarkdown.agents.image_ocr import _is_connection_error
+
+        exc = RuntimeError("Connection error.")
+        exc.__cause__ = None
+        assert _is_connection_error(exc)
+
+    def test_a_real_api_error_is_not_a_connection_error(self) -> None:
+        from twomarkdown.agents.image_ocr import _is_connection_error
+
+        exc = RuntimeError("status_code: 400, body: {'error': 'bad request'}")
+        exc.__cause__ = None
+        assert not _is_connection_error(exc)
+
+    def test_local_connection_failure_records_a_soft_failure(self) -> None:
+        from twomarkdown.agents import image_ocr
+        from twomarkdown.converter import ocr as ocr_mod
+
+        ocr_mod.begin_engine_record()
+        image_ocr._record_soft_failure_for(
+            "ollama:qwen2.5vl:7b", RuntimeError("Connection error."), what="OCR"
+        )
+
+        reason = ocr_mod.soft_failure_reason()
+        assert reason is not None
+        assert "ollama:qwen2.5vl:7b" in reason
+
+    def test_cloud_quota_exhaustion_records_a_soft_failure(self) -> None:
+        from twomarkdown.agents import image_ocr
+        from twomarkdown.converter import ocr as ocr_mod
+
+        ocr_mod.begin_engine_record()
+        image_ocr._record_soft_failure_for(
+            "openai:gpt-4o-mini",
+            RuntimeError("insufficient_quota: credit_balance_exhausted"),
+            what="Descripción de figuras",
+        )
+
+        assert "saldo agotado" in (ocr_mod.soft_failure_reason() or "")
+
+    def test_an_unrelated_error_records_nothing(self) -> None:
+        from twomarkdown.agents import image_ocr
+        from twomarkdown.converter import ocr as ocr_mod
+
+        ocr_mod.begin_engine_record()
+        image_ocr._record_soft_failure_for(
+            "openai:gpt-4o-mini", RuntimeError("malformed response"), what="OCR"
+        )
+
+        assert ocr_mod.soft_failure_reason() is None
+
+    def test_ocr_call_records_a_soft_failure_on_connection_error(
+        self, monkeypatch
+    ) -> None:
+        """ocr_image_bytes_llm() — a `ModelAPIError` wrapping a connection
+        failure to a local model is reported, not just swallowed as ""."""
+        from pydantic_ai.exceptions import ModelAPIError
+
+        from twomarkdown.agents import image_ocr
+        from twomarkdown.config import llm_config
+        from twomarkdown.converter import ocr as ocr_mod
+
+        monkeypatch.setattr(llm_config, "llm_enabled", True)
+        monkeypatch.setattr(llm_config, "vision_model", "ollama:qwen2.5vl:7b")
+        monkeypatch.setattr(
+            image_ocr,
+            "prepare_image_for_vision_llm",
+            lambda *a, **k: (b"x", "image/png"),
+        )
+
+        class _BrokenAgent:
+            def run_sync(self, *a, **k):
+                raise ModelAPIError("ollama:qwen2.5vl:7b", "Connection error.")
+
+        monkeypatch.setattr(image_ocr, "get_image_ocr_agent", lambda: _BrokenAgent())
+        monkeypatch.setattr(llm_config, "rate_limit_max_retries", 0)
+
+        ocr_mod.begin_engine_record()
+        result = image_ocr.ocr_image_bytes_llm(b"fake-bytes")
+
+        assert result == ""
+        reason = ocr_mod.soft_failure_reason()
+        assert reason is not None
+        assert "ollama:qwen2.5vl:7b" in reason

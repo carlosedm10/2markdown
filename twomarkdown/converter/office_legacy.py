@@ -13,9 +13,7 @@ class LegacyOfficeError(Exception):
     """Raised when legacy Office conversion cannot be performed."""
 
 
-LEGACY_SUFFIXES = frozenset(
-    {".doc", ".ppt", ".xls", ".odt", ".ods", ".odp", ".rtf"}
-)
+LEGACY_SUFFIXES = frozenset({".doc", ".ppt", ".xls", ".odt", ".ods", ".odp", ".rtf"})
 
 
 def is_legacy_office(path: Path) -> bool:
@@ -46,9 +44,7 @@ def convert_legacy_office(path: Path) -> str:
     """Convert a legacy Office / OpenDocument file to markdown via LibreOffice."""
     soffice = _find_soffice()
     if soffice is None:
-        raise LegacyOfficeError(
-            "LibreOffice not installed (soffice not on PATH)"
-        )
+        raise LegacyOfficeError("LibreOffice not installed (soffice not on PATH)")
 
     path = path.resolve()
     suffix = path.suffix.lower()

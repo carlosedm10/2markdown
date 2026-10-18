@@ -104,6 +104,35 @@ class TestPdfOcrFallback:
         ocr_fn.assert_not_called()
         assert pages == []
 
+    def test_should_fallback_true_when_forced_despite_digital_pdf(
+        self, tmp_path: Path
+    ) -> None:
+        """should_fallback() — pdf_ocr_force overrides a fully digital PDF."""
+        digital = _make_pdf(tmp_path / "digital.pdf", [LONG_TEXT])
+        with patch.object(pdf_ocr_config, "pdf_ocr_force", True):
+            assert (
+                pdf_ocr.should_fallback(
+                    LONG_TEXT,
+                    suffix=".pdf",
+                    pdf_path=digital,
+                )
+                is True
+            )
+
+    def test_extract_pages_forces_ocr_on_digital_pages(self, tmp_path: Path) -> None:
+        """extract_pages() — pdf_ocr_force re-OCRs pages with native text too."""
+        digital = _make_pdf(tmp_path / "digital.pdf", [LONG_TEXT])
+        ocr_fn = MagicMock(return_value="VISION-P1")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", False),
+            patch.object(pdf_ocr_config, "pdf_ocr_force", True),
+        ):
+            pages = pdf_ocr.extract_pages(digital, ocr_fn=ocr_fn)
+
+        ocr_fn.assert_called_once()
+        assert pages == [(1, "VISION-P1")]
+
     def test_extract_pages_ocrs_all_empty_pages(self, tmp_path: Path) -> None:
         """extract_pages() — OCR every page when none have native text."""
         empty = _make_pdf(tmp_path / "empty.pdf", ["", ""])
@@ -292,7 +321,6 @@ class TestPdfOcrFallback:
         assert pages == [(1, "OCR-1")]
 
 
-
 class TestScrambledTextDetection:
     """Equation-object slides extract as long but shredded token soup."""
 
@@ -329,9 +357,7 @@ class TestScrambledTextDetection:
         assert "Formula iterativa de Newton" in composed
         assert "### OCR" in composed
 
-    def test_no_markitdown_duplicate_when_pages_extracted(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_markitdown_duplicate_when_pages_extracted(self, tmp_path: Path) -> None:
         """compose_pdf_markdown() — a healthy page tree is not appended twice."""
         # Several pages, so the extracted tree is comfortably over the thin-native
         # threshold that still allows the MarkItDown rescue.
@@ -448,16 +474,15 @@ class TestFragmentedTextRepair:
 
 
 class TestVisionModelIsNotVetoedByTesseract:
-    """Tesseract scores handwriting confidently and still gets it wrong."""
+    """Low confidence and symbol soup reach the model; clean print does not."""
 
-    def test_scanned_page_reaches_the_model_despite_high_confidence(
+    def test_confident_print_stays_on_tesseract_when_a_model_is_configured(
         self, tmp_path: Path
     ) -> None:
-        """extract_pages() — a configured vision model does the page, not Tesseract.
+        """extract_pages() — a configured vision model does not skip Tesseract.
 
-        On this corpus Tesseract's median confidence was 73 against a threshold
-        of 75, so it blocked the model essentially at random and 77 pages came
-        out as noise.
+        On ocr-lab, handwriting tops out near 52 and printed pages rasterized
+        as images stay at 82 or above, so a score of 95 is print.
         """
         empty = _make_pdf(tmp_path / "scan.pdf", [""])
         llm_fn = MagicMock(return_value="transcripción correcta")
@@ -471,7 +496,29 @@ class TestVisionModelIsNotVetoedByTesseract:
             ),
             patch(
                 "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
-                return_value=("ruido con mucha confianza", 95.0),
+                return_value=("texto impreso de una página larga y legible", 95.0),
+            ),
+        ):
+            pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
+
+        llm_fn.assert_not_called()
+        assert pages == [(1, "texto impreso de una página larga y legible")]
+
+    def test_low_confidence_still_reaches_the_model(self, tmp_path: Path) -> None:
+        """extract_pages() — handwriting-range confidence still calls the model."""
+        empty = _make_pdf(tmp_path / "scan.pdf", [""])
+        llm_fn = MagicMock(return_value="transcripción correcta")
+
+        with (
+            patch("twomarkdown.converter.ocr.conversion_config.ocr_hybrid", True),
+            patch("twomarkdown.converter.ocr.conversion_config.min_image_px", 1),
+            patch(
+                "twomarkdown.converter.pdf_ocr._vision_model_available",
+                lambda: True,
+            ),
+            patch(
+                "twomarkdown.converter.ocr.tesseract_ocr_with_confidence",
+                return_value=("ruido", 42.0),
             ),
         ):
             pages = pdf_ocr.extract_pages(empty, ocr_fn=llm_fn)
@@ -500,3 +547,82 @@ class TestVisionModelIsNotVetoedByTesseract:
 
         llm_fn.assert_not_called()
         assert pages == [(1, "texto impreso limpio")]
+
+
+class TestTesseractNeedsVision:
+    def test_low_confidence_escalates(self) -> None:
+        assert (
+            pdf_ocr.tesseract_needs_vision(
+                "varias palabras de una página manuscrita ilegible aquí",
+                42.0,
+                min_confidence=75.0,
+            )
+            is True
+        )
+
+    def test_confident_prose_stays(self) -> None:
+        prose = (
+            "Determinar un intervalo tal que la funcion tenga distinto signo en "
+            "los extremos del metodo de biseccion sobre la recta real."
+        )
+        assert pdf_ocr.tesseract_needs_vision(prose, 92.0, min_confidence=75.0) is False
+
+    def test_symbol_soup_escalates_despite_high_confidence(self) -> None:
+        soup = " ".join(["x", "k", "f", "(", ")", "+", "-", "<"] * 8)
+        assert pdf_ocr.tesseract_needs_vision(soup, 95.0, min_confidence=75.0) is True
+
+    def test_sparse_words_on_ink_escalate(self) -> None:
+        with patch(
+            "twomarkdown.converter.ocr.image_dark_ratio",
+            return_value=0.4,
+        ):
+            assert (
+                pdf_ocr.tesseract_needs_vision(
+                    "Figura 1",
+                    96.0,
+                    min_confidence=75.0,
+                    image_bytes=b"png",
+                )
+                is True
+            )
+
+    def test_sparse_words_on_a_blank_page_stay(self) -> None:
+        with patch(
+            "twomarkdown.converter.ocr.image_dark_ratio",
+            return_value=0.01,
+        ):
+            assert (
+                pdf_ocr.tesseract_needs_vision(
+                    "Tema 1",
+                    96.0,
+                    min_confidence=75.0,
+                    image_bytes=b"png",
+                )
+                is False
+            )
+
+
+class TestForceLlmForRoute:
+    def test_tesseract_route_stays_hybrid_even_when_scrambled(self) -> None:
+        assert (
+            pdf_ocr._force_llm_for_route(
+                "tesseract", scrambled=True, vision_available=True
+            )
+            is False
+        )
+
+    def test_vision_route_still_runs_tesseract_first(self) -> None:
+        assert (
+            pdf_ocr._force_llm_for_route(
+                "vision", scrambled=False, vision_available=True
+            )
+            is False
+        )
+
+    def test_scrambled_text_layer_still_skips_the_confidence_gate(self) -> None:
+        assert (
+            pdf_ocr._force_llm_for_route(
+                "vision", scrambled=True, vision_available=True
+            )
+            is True
+        )

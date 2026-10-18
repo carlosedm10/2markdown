@@ -35,6 +35,8 @@ _engines = threading.local()
 def begin_engine_record() -> None:
     """Start recording which OCR engine answers, for one file."""
     _engines.fallback_pages = []
+    _engines.soft_failure = None
+    _engines.math_structure_lost_pages = []
 
 
 def record_engine_fallback() -> None:
@@ -47,6 +49,44 @@ def record_engine_fallback() -> None:
 def engine_fallback_count() -> int:
     """How many pages fell back since `begin_engine_record`."""
     return len(getattr(_engines, "fallback_pages", None) or ())
+
+
+def record_math_structure_lost_page(page: int) -> None:
+    """Note that a native-text page had a fraction/root flattened by extraction.
+
+    Set by `converter/pdf_ocr.py`'s `compose_pdf_markdown` when
+    `converter/math_density.analyze()` flags `structure_lost` on a page routed
+    to `agents.page_review.format_math` instead of vision OCR — the desktop
+    app can offer "releer con visión" for exactly these pages.
+    """
+    pages = getattr(_engines, "math_structure_lost_pages", None)
+    if pages is not None and page not in pages:
+        pages.append(page)
+
+
+def math_structure_lost_pages() -> list[int]:
+    """Pages `record_math_structure_lost_page` recorded since `begin_engine_record`."""
+    return list(getattr(_engines, "math_structure_lost_pages", None) or ())
+
+
+def record_soft_failure(reason: str) -> None:
+    """Note that some LLM-backed stage of this file was silently skipped.
+
+    A local vision model unreachable, or a cloud call out of quota, does not
+    stop the file converting — Tesseract picks up the page, or the pass is
+    just skipped — but reporting that as plain "ok" hides real data loss
+    (see B1/M5 in the desktop-app review). The first reason wins: several
+    stages can each warn once, but the job only carries one into its status.
+    Reset per file by `begin_engine_record`, so it never leaks across files
+    or jobs on a reused worker thread.
+    """
+    if not getattr(_engines, "soft_failure", None):
+        _engines.soft_failure = reason
+
+
+def soft_failure_reason() -> str | None:
+    """This file's first `record_soft_failure` reason, if any."""
+    return getattr(_engines, "soft_failure", None)
 
 
 def markdown_has_usable_text(markdown: str) -> bool:
@@ -151,6 +191,21 @@ def is_tiny_image(image_bytes: bytes, min_px: int | None = None) -> bool:
         return False
 
 
+def image_dark_ratio(image_bytes: bytes) -> float:
+    """Share of pixels darker than mid-grey, on a small downsample."""
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            gray = ImageOps.grayscale(ImageOps.exif_transpose(img) or img)
+            gray.thumbnail((200, 200))
+            hist = gray.histogram()
+    except Exception:
+        return 0.0
+    total = sum(hist)
+    if total <= 0:
+        return 0.0
+    return sum(hist[:160]) / total
+
+
 def tesseract_ocr_with_confidence(image_bytes: bytes) -> tuple[str, float]:
     """Return (text, mean word confidence 0-100)."""
     if shutil.which("tesseract") is None:
@@ -239,7 +294,14 @@ def ocr_image_bytes(
         if cancel is not None and cancel.is_set():
             return text
         if llm_min_confidence is not None:
-            if text and conf >= llm_min_confidence:
+            from twomarkdown.converter.pdf_ocr import tesseract_needs_vision
+
+            if text and not tesseract_needs_vision(
+                text,
+                conf,
+                min_confidence=llm_min_confidence,
+                image_bytes=image_bytes,
+            ):
                 return text
             if llm_fn is not None:
                 if cancel is not None and cancel.is_set():

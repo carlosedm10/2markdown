@@ -1,5 +1,3 @@
-
-
 class TestMathsIsNotProse:
     def test_spanish_maths_page_is_not_called_english(self) -> None:
         """guess_language() — LaTeX subscripts must not outvote the prose.

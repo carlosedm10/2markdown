@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,7 +13,9 @@ from pathlib import Path
 import fitz
 from tqdm import tqdm
 
+from twomarkdown.batch import events
 from twomarkdown.config import pdf_ocr_config
+from twomarkdown.converter.pdf_route import PageRoute, PdfInspection, effective_route
 from twomarkdown.telemetry import span
 
 logger = logging.getLogger(__name__)
@@ -75,6 +78,8 @@ def should_fallback(
         return False
     if suffix.lower() != ".pdf":
         return False
+    if pdf_ocr_config.pdf_ocr_force:
+        return True
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
     if pdf_path is not None or doc is not None:
         path = pdf_path if pdf_path is not None else Path(".")
@@ -99,6 +104,65 @@ def _render_page_pixmap(doc: fitz.Document, page_index: int) -> bytes:
         pix = None
 
 
+def _current_ocr_engine_name() -> str:
+    """The model that will actually answer a page, for the `page_done` event."""
+    if not _vision_model_available():
+        return "tesseract"
+    from twomarkdown.agents.image_ocr import normalize_model_id
+    from twomarkdown.config import llm_config
+
+    return normalize_model_id(llm_config.vision_model)
+
+
+def _force_llm_for_route(
+    route: PageRoute | None, *, scrambled: bool, vision_available: bool
+) -> bool:
+    """Skip Tesseract only when its confidence cannot be the judge.
+
+    A configured vision model used to take every scan. On ocr-lab, handwriting
+    tops out near 52 and printed pages rasterized as images stay at 82 or
+    above, so the hybrid threshold (``pdf_ocr_llm_min_confidence``) already
+    separates them. ``vision_available`` is unused on purpose: it must not
+    bypass that measurement. A shredded text layer still skips the gate,
+    because equation objects leave Tesseract reading the prose confidently
+    while the maths is gone. ``--force-ocr`` does the same.
+    """
+    del vision_available
+    if route == "tesseract":
+        return False
+    if pdf_ocr_config.pdf_ocr_force:
+        return True
+    return scrambled
+
+
+def tesseract_needs_vision(
+    text: str,
+    confidence: float,
+    *,
+    min_confidence: float,
+    image_bytes: bytes | None = None,
+) -> bool:
+    """Whether a Tesseract reading should be redone by the vision model.
+
+    High mean confidence keeps printed text. Symbol soup and a nearly wordless
+    page covered in ink do not, even when the score is high.
+    """
+    tokens = _TOKEN_RE.findall(text or "")
+    if (
+        image_bytes is not None
+        and len(tokens) < pdf_ocr_config.tesseract_graphic_min_words
+    ):
+        from twomarkdown.converter.ocr import image_dark_ratio
+
+        if image_dark_ratio(image_bytes) >= pdf_ocr_config.tesseract_graphic_dark_ratio:
+            return True
+    if not text.strip():
+        return True
+    if confidence < min_confidence:
+        return True
+    return is_scrambled_text(text)
+
+
 def extract_pages(
     pdf_path: Path,
     *,
@@ -106,13 +170,24 @@ def extract_pages(
     show_progress: bool = False,
     doc: fitz.Document | None = None,
     cancel: threading.Event | None = None,
+    file_index: int | None = None,
+    inspection: PdfInspection | None = None,
 ) -> list[tuple[int, str]]:
-    """OCR PDF pages with insufficient native text; returns (page_number, text)."""
+    """OCR PDF pages with insufficient native text; returns (page_number, text).
+
+    ``file_index`` is this file's position in the running job's file list (see
+    `batch/events.py`); when set, one `page_started`/`page_done` pair is
+    emitted per page actually OCR'd, for the desktop app's live view. `None`
+    (the CLI's own calls) emits nothing — same no-op-when-unattached rule as
+    everywhere else in `batch/events.py`.
+    """
     from twomarkdown.converter import ocr as ocr_mod
 
     results: list[tuple[int, str]] = []
     max_pages = pdf_ocr_config.pdf_ocr_max_pages
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
+    routes = inspection.routes if inspection is not None else None
+    vision_available = _vision_model_available()
 
     with open_pdf(pdf_path, doc) as opened:
         page_count = opened.page_count
@@ -138,12 +213,18 @@ def extract_pages(
                 )
                 break
             page = opened[i]
+            page_num = i + 1
             page_text = page.get_text().strip()
             scrambled = is_scrambled_text(page_text)
-            if len(page_text) >= min_chars and not scrambled:
-                continue
+            route = effective_route(page_num, routes, pixmap=None)
+            if routes is not None and not pdf_ocr_config.pdf_ocr_force:
+                if route == "native":
+                    continue
+            else:
+                has_enough_native = len(page_text) >= min_chars and not scrambled
+                if has_enough_native and not pdf_ocr_config.pdf_ocr_force:
+                    continue
 
-            page_num = i + 1
             if not show_progress:
                 logger.debug(
                     "PDF page OCR %s/%s: %s",
@@ -151,42 +232,78 @@ def extract_pages(
                     limit,
                     pdf_path.name,
                 )
-            png_bytes = _render_page_pixmap(opened, i)
+            page_pix = opened[i].get_pixmap(
+                matrix=fitz.Matrix(
+                    pdf_ocr_config.pdf_ocr_dpi / 72.0,
+                    pdf_ocr_config.pdf_ocr_dpi / 72.0,
+                ),
+                alpha=False,
+            )
+            route = effective_route(page_num, routes, pixmap=page_pix)
+            try:
+                png_bytes = page_pix.tobytes("png")
+            finally:
+                page_pix = None
             if cancel is not None and cancel.is_set():
                 break
-            with span("pdf.page_ocr", page=page_num):
+            if file_index is not None:
+                events.page_started(file_index, page_num)
+            page_started_at = time.perf_counter()
+            fallback_before = ocr_mod.engine_fallback_count()
+            force_llm = _force_llm_for_route(
+                route, scrambled=scrambled, vision_available=vision_available
+            )
+            with (
+                events.stage("ocr", page=page_num),
+                span("pdf.page_ocr", page=page_num),
+            ):
                 text = ocr_mod.ocr_image_bytes(
                     png_bytes,
                     ocr_fn=ocr_fn,
                     llm_min_confidence=pdf_ocr_config.pdf_ocr_llm_min_confidence,
-                    # Tesseract's confidence does not track whether the maths or
-                    # the handwriting survived: on this corpus its median was 73
-                    # against a threshold of 75, so it vetoed the vision model at
-                    # random and 77 pages came out as noise. When a vision model
-                    # is configured it does the page; Tesseract is the fallback
-                    # for when there is no model, not a gatekeeper for it.
-                    force_llm=scrambled or _vision_model_available(),
+                    force_llm=force_llm,
                     cancel=cancel,
                 ).strip()
+            fell_back = ocr_mod.engine_fallback_count() > fallback_before
+            review_changes: list[dict[str, object]] = []
             if text:
-                text = _reviewed(text, pdf_path, page_num)
+                text, review_changes = _reviewed(text, pdf_path, page_num)
                 results.append((page_num, text))
+            if file_index is not None:
+                events.page_done(
+                    file_index,
+                    page_num,
+                    engine="tesseract" if fell_back else _current_ocr_engine_name(),
+                    seconds=time.perf_counter() - page_started_at,
+                    fallback=fell_back,
+                    review_changes=review_changes,
+                )
 
     return results
 
 
-def _reviewed(text: str, pdf_path: Path, page_num: int) -> str:
+def _reviewed(
+    text: str, pdf_path: Path, page_num: int
+) -> tuple[str, list[dict[str, object]]]:
     """Proofread one page's transcription, if a reviewer is configured.
 
     Text only: the pass reads what was written and fixes what the writing itself
     contradicts. It is given no image, so it cannot tell what the page holds that
     the transcription does not — and therefore cannot invent it.
+
+    Returns the (possibly corrected) text and the diff structured for
+    `EventPageDone.review_changes` — the same real diff `describe_changes()`
+    already logs, not the model's own account of what it fixed.
     """
-    from twomarkdown.agents.page_review import review_enabled, review_page
+    from twomarkdown.agents.page_review import (
+        describe_changes_structured,
+        review_enabled,
+        review_page,
+    )
 
     if not review_enabled():
-        return text
-    with span("pdf.page_review", page=page_num):
+        return text, []
+    with events.stage("review", page=page_num), span("pdf.page_review", page=page_num):
         reviewed, changes = review_page(text)
     if changes:
         logger.info(
@@ -195,7 +312,8 @@ def _reviewed(text: str, pdf_path: Path, page_num: int) -> str:
             page_num,
             "; ".join(changes[:5]),
         )
-    return reviewed
+    structured = describe_changes_structured(text, reviewed) if changes else []
+    return reviewed, structured
 
 
 def _word_gaps(words: list) -> tuple[dict, list[float]]:
@@ -323,6 +441,40 @@ def merge(markdown: str, pages: list[tuple[int, str]]) -> str:
     return ocr_body
 
 
+def _maybe_format_math(native: str, page_num: int) -> str:
+    """Text-only LaTeX formatting for a math-dense *native* page.
+
+    A page whose text layer came straight from the PDF (not vision OCR) never
+    goes near a vision model, so a LaTeX-generated handout's formulas arrive
+    as raw glyph soup: "z = ¯x −µ0 σ/√n". `converter/math_density.py` finds
+    the spans deterministically; above `math_format_min_density` and with a
+    reviewer configured, `agents.page_review.format_math` gives the same
+    blind text-only reviewer a second, separate task — rewrite those spans as
+    LaTeX — with its own per-span guard, entirely apart from the errata pass
+    in `review_page()`. Falls through to the untouched text on any failure,
+    same as every other pass here.
+    """
+    from twomarkdown.converter import math_density
+
+    stats = math_density.analyze(native)
+    if stats.math_density < pdf_ocr_config.math_format_min_density:
+        return native
+
+    from twomarkdown.agents.page_review import format_math, review_enabled
+
+    if not review_enabled():
+        return native
+
+    if stats.structure_lost:
+        from twomarkdown.converter import ocr as ocr_mod
+
+        ocr_mod.record_math_structure_lost_page(page_num)
+
+    with events.stage("review", page=page_num), span("pdf.math_format", page=page_num):
+        formatted, _changes = format_math(native, stats.spans)
+    return formatted
+
+
 def compose_pdf_markdown(
     *,
     pdf_path: Path,
@@ -330,11 +482,15 @@ def compose_pdf_markdown(
     ocr_pages: list[tuple[int, str]],
     tables: list[tuple[int, str]] | None = None,
     doc: fitz.Document | None = None,
+    inspector_native: dict[int, str] | None = None,
 ) -> str:
     """Build markdown in page order: native text, OCR prose, tables."""
     ocr_map = {num: text for num, text in ocr_pages}
     table_map: dict[int, list[str]] = {}
+    inspector_pages = set(inspector_native or {})
     for num, block in tables or []:
+        if num in inspector_pages:
+            continue
         table_map.setdefault(num, []).append(block)
 
     min_chars = pdf_ocr_config.pdf_ocr_min_chars
@@ -345,11 +501,18 @@ def compose_pdf_markdown(
         for index, page in enumerate(opened):
             page_num = index + 1
             chunks = [f"## Page {page_num}"]
-            native = _native_page_text(page, min_chars)
+            if inspector_native and page_num in inspector_native:
+                native = inspector_native[page_num]
+            else:
+                native = _native_page_text(page, min_chars)
             # A scrambled text layer is noise once the model has transcribed the
             # page; keeping both would leave the garbage above the good version.
             if native and page_num in ocr_map and is_scrambled_text(native):
                 native = ""
+            # Only a page whose text came from the PDF itself, not vision OCR —
+            # an OCR'd page already went through the model and review_page().
+            if native and page_num not in ocr_map:
+                native = _maybe_format_math(native, page_num)
             if native:
                 chunks.append(native)
                 native_concat.append(native)

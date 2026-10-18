@@ -152,8 +152,12 @@ def _extract_preview_image_from_zip(bundle: Path, dest_dir: Path) -> Path | None
             names = zf.namelist()
             for wanted in _PREVIEW_IMAGE_NAMES:
                 match = next(
-                    (n for n in names if n.lower() == wanted or
-                     Path(n).name.lower() == Path(wanted).name),
+                    (
+                        n
+                        for n in names
+                        if n.lower() == wanted
+                        or Path(n).name.lower() == Path(wanted).name
+                    ),
                     None,
                 )
                 if match is None:
@@ -273,9 +277,7 @@ def convert_bundle(
             text = markitdown_converter.convert_file(preview).strip()
 
         if not text:
-            raise IWorkConversionError(
-                f"preview.pdf yielded no text: {path.name}"
-            )
+            raise IWorkConversionError(f"preview.pdf yielded no text: {path.name}")
         return text
     finally:
         if temp_dir is not None:
